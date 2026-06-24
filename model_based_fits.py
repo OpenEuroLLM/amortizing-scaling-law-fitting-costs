@@ -3,6 +3,8 @@ import json
 
 import numpy as np
 import pandas as pd
+
+from pathlib import Path
 from scipy.optimize import curve_fit
 
 from models import MODELS
@@ -10,11 +12,11 @@ from selection import SELECTION
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--seed', type=int, required=True)
-parser.add_argument('--subset', type=int, required=True)
+parser.add_argument('--num_points', type=int, required=True)
 parser.add_argument('--model_type', type=str, default='gp', choices=list(MODELS))
-parser.add_argument('--splitter', type=str, default='random', choices=list(SELECTION))
+parser.add_argument('--selection', type=str, default='random', choices=list(SELECTION))
 parser.add_argument('--input', type=str, required=True)
-parser.add_argument('--output', type=str, required=True)
+parser.add_argument('--output_dir', type=str, required=True)
 args = parser.parse_args()
 
 df = pd.read_csv(args.input)
@@ -25,13 +27,12 @@ df = df[df['N'] != 1.7e9]
 df_fit = pd.DataFrame(df).reset_index(drop=True)
 
 # Generate training data
-n_points = int(len(df_fit) * args.subset / 100)
-splitter = SELECTION[args.splitter](seed=args.seed)
-X, y = splitter.split(df_fit, n_points)
+n_points = args.num_points
+splitter = SELECTION[args.selection](seed=args.seed)
+X, y, total_compute = splitter.split(df_fit, n_points)
 
-total_compute = df_fit['C'].loc[X.index].sum()
-train_x = np.log(X.to_numpy())
-train_y = y.to_numpy()[:, None]
+train_x = np.log(X)
+train_y = y[:, None]
 
 X_test = np.log(df_fit[['N', 'D', 'lr', 'gbsz']].to_numpy())
 
@@ -73,9 +74,8 @@ results = {
     'A_fit': A_fit,
     'alpha_fit': alpha_fit,
     'seed': args.seed,
-    'subset': args.subset,
     'n_points': n_points,
     'mse': float(mse),
     'total_compute': total_compute,
 }
-json.dump(results, open(args.output, 'w'))
+json.dump(results, open(Path(args.output_dir) / f'results_{args.model_type}_{args.selection}_{n_points}_points_seed_{args.seed}.json', 'w'))
