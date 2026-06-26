@@ -22,7 +22,6 @@ args = parser.parse_args()
 df = pd.read_csv(args.input)
 
 df["C"] = 6 * df["N"] * df["D"]
-print(df['C'].sum())
 df = df[df['N'] != 1.7e9]
 df_fit = pd.DataFrame(df).reset_index(drop=True)
 
