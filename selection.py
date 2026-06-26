@@ -45,9 +45,9 @@ class LocalSearch(DataSelection):
             # sample a random point on the smallest scale
             lr_grid = df_fit[(df_fit['N'] == current_scale_model_size)&(df_fit['D'] == current_scale_token_budget)]['lr'].unique()
             gbsz_grid = df_fit[(df_fit['N'] == current_scale_model_size)&(df_fit['D'] == current_scale_token_budget)]['gbsz'].unique()
-            current_point = {'lr': np.random.choice(lr_grid), 'gbsz': np.random.choice(gbsz_grid)}
+            incumbent = {'lr': np.random.choice(lr_grid), 'gbsz': np.random.choice(gbsz_grid)}
         else:
-            current_point = self.starting_point
+            incumbent = self.starting_point
         current_best_observed_loss = None
         reset_on_new_scale = True
 
@@ -56,30 +56,30 @@ class LocalSearch(DataSelection):
             # if we are on a new scale, we start with evaluating the incumbent
             if reset_on_new_scale:
                 # evaluate current point
-                index_current_point = df_fit.index[
+                index_incumbent = df_fit.index[
                     (df_fit['N'] == current_scale_model_size) & (df_fit['D'] == current_scale_token_budget) & (
-                                df_fit['lr'] == current_point['lr']) & (df_fit['gbsz'] == current_point['gbsz'])]
+                                df_fit['lr'] == incumbent['lr']) & (df_fit['gbsz'] == incumbent['gbsz'])]
 
                 # FIXME: if we don't have observed this point, continue with a random configuration, this can only happen for incomplete grids
-                if len(index_current_point) == 0:
+                if len(index_incumbent) == 0:
                     lr_grid = \
                     df_fit[(df_fit['N'] == current_scale_model_size) & (df_fit['D'] == current_scale_token_budget)][
                         'lr'].unique()
                     gbsz_grid = \
                     df_fit[(df_fit['N'] == current_scale_model_size) & (df_fit['D'] == current_scale_token_budget)][
                         'gbsz'].unique()
-                    current_point = {'lr': np.random.choice(lr_grid), 'gbsz': np.random.choice(gbsz_grid)}
-                    index_current_point = df_fit.index[(df_fit['N'] == current_scale_model_size) & (df_fit['D'] == current_scale_token_budget) & (
-                            df_fit['lr'] == current_point['lr']) & (df_fit['gbsz'] == current_point['gbsz'])]
+                    incumbent = {'lr': np.random.choice(lr_grid), 'gbsz': np.random.choice(gbsz_grid)}
+                    index_incumbent = df_fit.index[(df_fit['N'] == current_scale_model_size) & (df_fit['D'] == current_scale_token_budget) & (
+                            df_fit['lr'] == incumbent['lr']) & (df_fit['gbsz'] == incumbent['gbsz'])]
 
-                loss_value = df_fit[TARGET].iloc[index_current_point].values[0]
+                loss_value = df_fit[TARGET].iloc[index_incumbent].values[0]
 
                 # bookkeeping
-                config = (current_scale_model_size, current_scale_token_budget, current_point['lr'],
-                          current_point['gbsz'])
+                config = (current_scale_model_size, current_scale_token_budget, incumbent['lr'],
+                          incumbent['gbsz'])
                 grid_values.append(config)
                 loss_values.append(loss_value)
-                total_compute += df_fit['C'].iloc[index_current_point].values[0]
+                total_compute += df_fit['C'].iloc[index_incumbent].values[0]
                 current_best_observed_loss = loss_value
                 reset_on_new_scale = False
 
@@ -89,27 +89,27 @@ class LocalSearch(DataSelection):
                 neighbours = []
                 lr_grid = np.sort(df_fit[(df_fit['N'] == current_scale_model_size)&(df_fit['D'] == current_scale_token_budget)]['lr'].unique())
 
-                lower = list(lr_grid).index(current_point['lr']) - 1
-                upper = list(lr_grid).index(current_point['lr']) + 1
+                lower = list(lr_grid).index(incumbent['lr']) - 1
+                upper = list(lr_grid).index(incumbent['lr']) + 1
 
                 if lower >= 0:
-                    neighbours.append({'lr': lr_grid[lower], 'gbsz': current_point['gbsz']})
+                    neighbours.append({'lr': lr_grid[lower], 'gbsz': incumbent['gbsz']})
 
                 if upper < len(lr_grid):
-                    neighbours.append({'lr': lr_grid[upper], 'gbsz': current_point['gbsz']})
+                    neighbours.append({'lr': lr_grid[upper], 'gbsz': incumbent['gbsz']})
 
                 gbsz_grid = np.sort(df_fit[(df_fit['N'] == current_scale_model_size)&(df_fit['D'] == current_scale_token_budget)]['gbsz'].unique())
 
                 try:
-                    lower = list(gbsz_grid).index(current_point['gbsz']) - 1
-                    upper = list(gbsz_grid).index(current_point['gbsz']) + 1
+                    lower = list(gbsz_grid).index(incumbent['gbsz']) - 1
+                    upper = list(gbsz_grid).index(incumbent['gbsz']) + 1
                 except ValueError:
-                    print(gbsz_grid, current_point)
+                    print(gbsz_grid, incumbent)
                 if lower >= 0:
-                    neighbours.append({'lr': current_point['lr'], 'gbsz': gbsz_grid[lower]})
+                    neighbours.append({'lr': incumbent['lr'], 'gbsz': gbsz_grid[lower]})
 
                 if upper < len(gbsz_grid):
-                    neighbours.append({'lr': current_point['lr'], 'gbsz': gbsz_grid[upper]})
+                    neighbours.append({'lr': incumbent['lr'], 'gbsz': gbsz_grid[upper]})
 
                 ## evaluate all neighbors, stop the evaluation if we found something better
                 found_something_better = False
@@ -122,23 +122,23 @@ class LocalSearch(DataSelection):
                         continue
 
                     # evaluate
-                    index_current_point = df_fit.index[
+                    index_incumbent = df_fit.index[
                         (df_fit['N'] == current_scale_model_size) & (df_fit['D'] == current_scale_token_budget) & (
                                     df_fit['lr'] == neighbour['lr']) & (df_fit['gbsz'] == neighbour['gbsz'])]
 
-                    if len(index_current_point) == 0:
+                    if len(index_incumbent) == 0:
                         continue
-                    loss_value = df_fit[TARGET].iloc[index_current_point].values[0]
+                    loss_value = df_fit[TARGET].iloc[index_incumbent].values[0]
 
                     # bookkeeping
                     grid_values.append(config)
                     loss_values.append(loss_value)
-                    total_compute += df_fit['C'].iloc[index_current_point].values[0]
+                    total_compute += df_fit['C'].iloc[index_incumbent].values[0]
 
                     ## if we have improved, we can stop here
                     if current_best_observed_loss > loss_value:
                         current_best_observed_loss = loss_value
-                        current_point = neighbour
+                        incumbent = neighbour
                         found_something_better = True
                         break
 
@@ -149,7 +149,7 @@ class LocalSearch(DataSelection):
                     # save the optimum at this scale
                     if current_scale_model_size not in optimum_per_scale:
                         optimum_per_scale[current_scale_model_size] = {}
-                    optimum_per_scale[current_scale_model_size][current_scale_token_budget] = current_point
+                    optimum_per_scale[current_scale_model_size][current_scale_token_budget] = incumbent
 
                     ## check if we are already at the highest token budget, if not increase D
                     if current_scale_token_budget < d_scale.max():
@@ -163,7 +163,7 @@ class LocalSearch(DataSelection):
                         current_scale_token_budget = d_scale.min()
 
                         # reset the incumbent to the optimal config we found on this scale on the D_min
-                        current_point = optimum_per_scale[current_scale_model_size][current_scale_token_budget]
+                        incumbent = optimum_per_scale[current_scale_model_size][current_scale_token_budget]
 
                         # increase N
                         index_current_model_scale = list(n_scale).index(current_scale_model_size)
