@@ -17,7 +17,7 @@ A standard scaling law study sweeps many combinations of model size `N`, dataset
 |---|-----------------------------------------------------------------------------------------------------------------|
 | `model_based_fits.py` | Main entry point — runs the surrogate pipeline and writes results to JSON                                       |
 | `models.py` | Surrogate model backends: GP (BoTorch/GPyTorch), TabPFN, AutoGluon                                              |
-| `splitters.py` | Training data selection strategies (currently: random)                                                          |
+| `selection.py` | Training data selection strategies: random, local search                                                        |
 | `fit_scaling_laws_loss_vs_compute.py` | Standalone script using the original code from Niccolo for fitting and plotting a power law on the full dataset |
 
 ## Usage
@@ -26,15 +26,15 @@ A standard scaling law study sweeps many combinations of model size `N`, dataset
 
 ```bash
 python model_based_fits.py \
-    --input  path/to/all_points_clean.csv \
-    --output results.json \
-    --subset  20 \        # percentage of runs to use as training data
-    --seed    1 \
-    --model_type gp \     # gp | tabpfn | ag
-    --splitter random
+    --input      path/to/all_points_clean.csv \
+    --output_dir results/ \
+    --num_points 50 \          # absolute number of training runs
+    --seed       1 \
+    --model_type gp \          # gp | tabpfn | ag
+    --selection  random        # random | local_search
 ```
 
-The output JSON contains the fitted `A_fit`, `alpha_fit`, surrogate MSE, number of training points, and total compute of the training subset.
+Results are written to `output_dir` as `results_{model_type}_{selection}_{num_points}_points_seed_{seed}.json`. Each file contains the fitted `A_fit`, `alpha_fit`, surrogate MSE, number of training points, and total compute of the training subset.
 
 ### Full-data fit and plot
 
@@ -65,6 +65,13 @@ A CSV with at least these columns:
 | `ag` | `AutoGluonModel` | AutoGluon TabularPredictor |
 
 All models receive log-transformed features.
+
+## Selection strategies
+
+| Key | Class | Description |
+|---|---|---|
+| `random` | `RandomSelection` | Uniformly samples `num_points` runs at random |
+| `local_search` | `LocalSearch` | Starts at the smallest scale and performs coordinate-wise local search over `lr`/`gbsz`, transferring the incumbent to larger `N`/`D` scales |
 
 ## Dependencies
 
