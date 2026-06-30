@@ -3,13 +3,13 @@ import pandas as pd
 import matplotlib.pyplot as plt
 
 import seaborn as sns
-from scripts.utils import N_palette, D_palette, Ns, Ds, N_color_map, D_color_map, FORMAT_BILLIONS, N_ticks, D_ticks
+from plot_utils import N_palette, D_palette, Ns, Ds, N_color_map, D_color_map, FORMAT_BILLIONS, N_ticks, D_ticks
 from scipy.optimize import curve_fit
 
 
 loss_key = 'loss'
 
-df = pd.read_csv('../../data/preprocessed/all_points_clean.csv')
+df = pd.read_csv('../dense_english_scaling_results/data/preprocessed/all_points_clean.csv')
 #df = pd.read_csv('../../data/model_based/model_based_scaling_laws_subset_20_seed_1.csv')
 df.head()
 
@@ -144,5 +144,5 @@ ax.legend(
 )
 
 plt.tight_layout()
-plt.savefig('../../fig/model/fit_compute.png')
+plt.savefig('../dense_english_scaling_results/fig/model/fit_compute.png')
 plt.show()
