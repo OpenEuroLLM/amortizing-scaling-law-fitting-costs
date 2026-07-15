@@ -1,0 +1,14 @@
+.python-version
+
+*.pkl
+*.json
+
+
+
+__pycache__/
+
+*/__pycache__/
+
+
+
+CLAUDE.md
