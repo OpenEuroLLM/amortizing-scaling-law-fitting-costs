@@ -12,15 +12,40 @@ class DataSelection(ABC):
     def split(self, df_fit: pd.DataFrame, n_points: int) -> tuple[pd.DataFrame, pd.Series]:
         """Return (X, y) with n_points training rows selected from df_fit."""
 
+    @abstractmethod
+    def next_point(self, df: pd.DataFrame, candidate_set: pd.Index | None = None, **kwargs) -> int:
+        """Return the index of the next point to acquire. candidate_set=None → full df."""
+
 
 class RandomSelection(DataSelection):
     def __init__(self, seed: int):
         self.seed = seed
+        self.rng = np.random.RandomState(self.seed)
 
-    def split(self, df_fit, n_points):
-        rng = np.random.RandomState(self.seed)
-        idx = rng.choice(df_fit.index, n_points, replace=False)
-        return df_fit[FEATURES].iloc[idx].to_numpy(), df_fit[TARGET].iloc[idx].to_numpy(), df_fit['C'].iloc[idx].sum()
+    def split(
+        self,
+        df_fit: pd.DataFrame,
+        n_point: int,
+        rng: np.random.RandomState | None = None
+    ) -> tuple[np.ndarray, np.ndarray, float, pd.Index]:
+        if rng is None:
+            rng = np.random.RandomState(self.seed)
+        idx = rng.choice(df_fit.index, n_point, replace=False)
+        remaining_idx = df_fit.index.difference(idx)
+        return df_fit[FEATURES].iloc[idx].to_numpy(), df_fit[TARGET].iloc[idx].to_numpy(), df_fit['C'].iloc[idx].sum(), remaining_idx
+    
+    def next_point(
+        self,
+        df: pd.DataFrame,
+        candidate_set: pd.Index | None = None,
+        **kwargs
+    ) -> int:
+        if len(df) == 0:
+            raise ValueError("Dataframe is empty, cannot select next point.")
+        if candidate_set is None:
+            candidate_set = df.index
+        return self.rng.choice(candidate_set, 1)[0]
+
 
 class LocalSearch(DataSelection):
     def __init__(self, seed: int, starting_point: dict = None):
@@ -171,10 +196,15 @@ class LocalSearch(DataSelection):
 
 
 
-        return np.array(grid_values), np.array(loss_values), total_compute
+        return np.array(grid_values), np.array(loss_values), total_compute, None
 
+    def next_point(
+        self,
+        df: pd.DataFrame,
+        candidate_set: pd.Index | None = None,
+        replace: bool = False,
+        **kwargs
+    ) -> int:
+        raise NotImplementedError("LocalSearch does not support next_point selection yet.")
 
-SELECTION = {
-    "random": RandomSelection,
-    "local_search": LocalSearch,
-}
+# end of file
