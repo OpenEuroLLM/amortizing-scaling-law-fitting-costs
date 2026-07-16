@@ -271,6 +271,7 @@ if __name__ == "__main__":
             "known_test_mse": float(np.mean(
                 (functional_form_L0(C_known, best_params, return_log_loss=False) - L_known) ** 2
             )),
+            "L_known": list(functional_form_L0(C_known, best_params, return_log_loss=False)),
             "C_unknown": list(C_unknown),
             "L_unknown": list(functional_form_L0(C_unknown, best_params, return_log_loss=False)),
             "params": list(best_params),
