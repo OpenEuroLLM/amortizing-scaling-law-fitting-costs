@@ -349,11 +349,14 @@ if __name__ == "__main__":
 
         # # update C_lim envelope for sampling: ceiling stays one growth step above the max cost seen
         C_lim = observations.C.max()
-    
+    print(f"{'-'*30}")
     print("Global surrogate fit results:")
     _print_fit_results(global_best_params)
     print(f"Known Test MSE: {history[-1]['known_test_mse']:.2e}")
-    print(f"Unknown Test Predictions: {history[-1]['L_unknown']}")
+    print(f"Unknown Test Predictions:")
+    for i in range(len(C_unknown)):
+        print(f"    C={C_unknown[i]:.2e} -> L={history[-1]['L_unknown'][i]:.3f}")
+    print(f"{'-'*30}")
     print("Run done!")
 
     print(f"{'='*30}\nIncumbent regrets:")
@@ -377,7 +380,7 @@ if __name__ == "__main__":
             (axes[0, 1], "regret_A", "regret A", "log"),
             (axes[0, 2], "regret_alpha", "regret alpha", "log"),
             (axes[1, 0], "known_test_mse", "known-test MSE", "log"),
-            (axes[1, 1], "total_compute_spent", "cumulative compute (C)", "log"),
+            (axes[1, 1], "iter_compute", "compute / iter", "log"),
         ]
         for ax, col, title, yscale in panels:
             if "regret" in title:
@@ -422,4 +425,23 @@ if __name__ == "__main__":
         fig.tight_layout()
         fig.savefig(output_dir / f"{args.filename}.png", dpi=150)
         print(f"Saved figure to {output_dir / f'{args.filename}.png'}")
+
+        print(f"{'='*30}\nDiagnostics for Pareto membership:")
+        # pareto from the observations
+        obs_pareto  = get_pareto_frontier(obs_df,  x_name="C", y_name="loss")
+        acq = set(obs_pareto.index)  # indices of observed points
+        # pareto from the observations + GP-predicted rest (fantasized)
+        fant_pareto = get_pareto_frontier(df_pred, x_name="C", y_name="loss")
+        fant_idx = set(fant_pareto.index)  # indices of fantasized pareto points
+        labels = [
+            "observed-only frontier", 
+            "fantasized frontier", 
+            "    from observed points", 
+            "    from GP predictions"
+        ]
+        width = max(len(label) for label in labels)
+        print(f"{labels[0]:<{width}} : {len(obs_pareto)} points")
+        print(f"{labels[1]:<{width}} : {len(fant_pareto)} points")
+        print(f"{labels[2]:<{width}} : {len(fant_idx & acq)} points")
+        print(f"{labels[3]:<{width}} : {len(fant_idx - acq)} points")
 # end of file
