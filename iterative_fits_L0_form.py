@@ -1,4 +1,5 @@
 import argparse
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 from pathlib import Path
@@ -26,19 +27,26 @@ MAX_ITERS = 1000
 
 def next_batch_compute(
     df: pd.DataFrame,
-    acquired_idx: pd.Index | int,
-    C_lim: float | None = None,
+    acquired_idx: pd.Index | None = None,
+    C_max: float | None = None,
+    C_window: tuple[float, float] | None = None,
     C_envelope_growth: float = 2.0
 ) -> pd.DataFrame:
-    pool = df.index.difference(acquired_idx)
-    if C_lim is not None:
+    """Subsets the data within a compute bracket.
+    """
+    pool = df.index.difference(acquired_idx) if acquired_idx is not None else df.index
+    if C_max is not None and C_window is not None:
         while True:
-            _idxs = (df.loc[pool, "C"] <= C_lim)
-            if _idxs.any() or C_lim >= df.C.max():
+            _idxs = (df.loc[pool, "C"] >= C_window[0] * C_max) & (df.loc[pool, "C"] <= C_window[1] * C_max)
+            if _idxs.any():
                 pool = pool[_idxs]
                 break
+            elif C_max > df.loc[pool, "C"].max():
+                # if the max compute is already above the envelope, just return the pool
+                break
             else:
-                C_lim *= C_envelope_growth
+                # push the envelope to not return an empty pool
+                C_max *= C_envelope_growth
     return df.loc[pool]
 
 
@@ -142,7 +150,7 @@ def _print_fit_results(params: np.ndarray):
     assert len(params) == 3, "Expected 3 parameters: L0, A, alpha"
     L0, A, alpha = params
     print(f"L(C) = {np.exp(L0):.3f} + {np.exp(A):.3f} * C^({alpha:.4f})\n")
-    
+
 
 def get_args():
     parser = argparse.ArgumentParser()
@@ -150,14 +158,22 @@ def get_args():
     parser.add_argument('--niters', type=int, default=None)
     parser.add_argument('--total_C', type=float, default=None)
     parser.add_argument('--init_points', type=int, default=25)
-    parser.add_argument('--init_compute_factor', type=float, default=10.0)
+    parser.add_argument(
+        '--init_compute_factor', type=float, default=10.0,
+        help="Factor to multiply the minimum compute cost to set the initial envelope for sampling."
+    )
+    parser.add_argument(
+        '--C_window', type=float, nargs=2, default=[1e-3, 1e3], metavar=('LO', 'HI'),
+        help="Factors on the max. seen compute to determine permissible range for sampling."
+    )
     parser.add_argument('--model_type', type=str, default='gp', choices=['gp'])
     parser.add_argument('--selection', type=str, default='random', choices=list(SELECTION))
     parser.add_argument('--input', type=str, required=True)
     parser.add_argument('--output_dir', type=str, required=True)
     parser.add_argument('--fit_quality', type=str, default='debug', choices=['debug', 'dense'])
-    parser.add_argument('--C_envelope_growth', type=float, default=2.0)
     parser.add_argument('--filename', default="history")
+
+    parser.add_argument('--plot_figure', action='store_true')
 
     args = parser.parse_args()
     return args
@@ -206,13 +222,13 @@ if __name__ == "__main__":
 
     # main loop here
     splitter = SELECTION[args.selection](seed=args.seed)
+    rng = np.random.RandomState(args.seed)
 
     # initialization: seed with the cheapest point, then fill up to init_points under the envelope
     C_lim = train_df.C.min() * args.init_compute_factor
-    acquired_idx = pd.Index([train_df["C"].idxmin()])
-    while len(acquired_idx) < args.init_points:
-        pool = next_batch_compute(train_df, acquired_idx, C_lim)
-        acquired_idx = acquired_idx.append(pd.Index([splitter.next_point(train_df, pool.index)]))
+    total_compute_spent = 0
+    pool = next_batch_compute(train_df, acquired_idx=None, C_max=C_lim, C_window=args.C_window)
+    acquired_idx = pd.Index(rng.choice(pool.index, args.init_points , replace=False))
     total_compute_spent = train_df.loc[acquired_idx, "C"].sum()
 
     # main loop
@@ -232,7 +248,7 @@ if __name__ == "__main__":
             break
 
         # sample a new point under the cost envelope; its C is this iteration's cost
-        pool = next_batch_compute(train_df, acquired_idx, C_lim)
+        pool = next_batch_compute(train_df, acquired_idx, C_max=C_lim, C_window=args.C_window)
         new_idx = splitter.next_point(train_df, pool.index)
         acquired_idx = acquired_idx.append(pd.Index([new_idx]))
         iter_compute = train_df.loc[new_idx, "C"]
@@ -264,6 +280,7 @@ if __name__ == "__main__":
         history.append({
             "iter": iter_idx,
             "n_acquired": len(acquired_idx),
+            "acquired_idx": int(new_idx),
             "iter_compute": float(iter_compute),
             "total_compute_spent": float(total_compute_spent),
             "heldout_mse": float(heldout_mse),
@@ -287,8 +304,8 @@ if __name__ == "__main__":
         incumbents["A"] = min(incumbents["A"], history[-1]["regret_A"])
         incumbents["alpha"] = min(incumbents["alpha"], history[-1]["regret_alpha"])
 
-        # update C_lim envelope for sampling: ceiling stays one growth step above the max cost seen
-        C_lim = max(C_lim, observations.C.max() * args.C_envelope_growth)
+        # # update C_lim envelope for sampling: ceiling stays one growth step above the max cost seen
+        C_lim = observations.C.max()
     
     print("Global surrogate fit results:")
     _print_fit_results(global_best_params)
@@ -305,4 +322,55 @@ if __name__ == "__main__":
     history_df = pd.DataFrame(history)
     history_df.to_parquet(output_dir / f"{args.filename}.parquet", index=False)
     print(f"Saved history to {output_dir / f'{args.filename}.parquet'}")
+
+
+    if args.plot_figure:
+
+        fig, axes = plt.subplots(2, 3, figsize=(16, 9))
+
+        # row 1: regrets; row 2 (first two): known-test mse, cumulative compute
+        panels = [
+            (axes[0, 0], "regret_L0", "regret L0 (signed)", None),
+            (axes[0, 1], "regret_A", "regret A", "log"),
+            (axes[0, 2], "regret_alpha", "regret alpha", "log"),
+            (axes[1, 0], "known_test_mse", "known-test MSE", "log"),
+            (axes[1, 1], "total_compute_spent", "cumulative compute (C)", "log"),
+        ]
+        for ax, col, title, yscale in panels:
+            ax.plot(history_df["iter"], history_df[col])
+            if yscale:
+                ax.set_yscale(yscale)
+            ax.set_xlabel("iteration")
+            ax.set_title(title)
+        axes[0, 0].axhline(0, color="gray", lw=0.5)
+
+        # row 2, third column: real vs fantasized parametric fits
+        ax = axes[1, 2]
+
+        # "real": fit only on actually observed points (init + acquired)
+        obs_df = train_df.loc[acquired_idx]
+        real_params, _ = build_fit(obs_df[INPUT_X + ["C", OUTPUT_Y]], fit_quality=args.fit_quality)
+        # "fantasized": last fit from history (true observed + GP-predicted rest)
+        fant_params = history_df.iloc[-1]["params"]
+
+        # scatter: seen pareto + known-test pareto (unknown has no ground truth)
+        _obs_pareto = get_pareto_frontier(obs_df, x_name="C", y_name="loss")
+        ax.scatter(_obs_pareto["C"], _obs_pareto["loss"], marker="x", color="black", zorder=3, label="observed")
+        ax.scatter(C_known, L_known, marker="x", color="tab:blue", zorder=3, label="held out")
+
+        C_grid = np.geomspace(obs_df["C"].min(), C_unknown.max(), 200)
+        seen = C_grid <= obs_df["C"].max()
+        for params, color, label in [(real_params, "tab:green", "real"), (fant_params, "red", "fantasized")]:
+            L_hat = functional_form_L0(C_grid, np.asarray(params), return_log_loss=False)
+            ax.plot(C_grid[seen], L_hat[seen], color=color, ls="-", label=label)
+            ax.plot(C_grid[~seen], L_hat[~seen], color=color, ls="--")
+        ax.set_xscale("log")
+        ax.set_xlabel("C")
+        ax.set_ylabel("loss")
+        ax.legend()
+        ax.set_title("real vs fantasized fit (dashed = beyond seen C)")
+
+        fig.tight_layout()
+        fig.savefig(output_dir / f"{args.filename}.png", dpi=150)
+        print(f"Saved figure to {output_dir / f'{args.filename}.png'}")
 # end of file
