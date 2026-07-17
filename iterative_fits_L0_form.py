@@ -122,24 +122,33 @@ def build_fit(
 def param_fit_setup_args(
     fit_quality: str = 'debug',
 ) -> tuple[list[list[float]], list[tuple[float, float]]]:
-    if fit_quality == 'debug':
-        initial_grid = [
+    """Initial grid and bounds for parametric fit of L(C) = L0 + A * C^alpha.
+    """
+    if fit_quality == 'debug': # 3 x 3 x 3 = 27
+        initial_grid = [ 
             [l0, a, b]
             for l0 in np.log([0.5, 1.0, 2.0])     # L0 guesses
-            for a in [0.0, 3.0, 6.0]              # a = log(coefficient)
-            for b in [-0.03, -0.1, -0.3]          # exponent (negative!)
+            for a in [0., 5., 10.,]              # a = log(coefficient)
+            for b in [-0.05, -0.2, -0.5]          # exponent (negative!)
         ]
-    elif fit_quality == 'dense':
+    elif fit_quality == 'dense':  # 6 x 6 x 6 = 216
+        initial_grid = [ 
+            [l0, a, b]
+            for l0 in np.linspace(np.log(0.1), np.log(3.0), 6)
+            for a in [0., 5., 10., 20., 30., 40.]
+            for b in [-0.02, -0.05, -0.1, -0.2, -0.5, -1.0]
+        ]
+    elif fit_quality == 'super_dense':   # 10 x 13 x 14 = 1820
         initial_grid = [
             [l0, a, b]
-            for l0 in np.log([0.5, 0.75, 1.0, 1.5, 2.0])  # L0 guesses
-            for a in [0.0, 1.5, 3.0, 4.5, 6.0]            # a = log(coefficient)
-            for b in [-0.03, -0.06, -0.1, -0.2, -0.3]     # exponent (negative!)
+            for l0 in np.linspace(np.log(0.05), np.log(3.5), 8)
+            for a in [0., 2.5, 5., 7.5, 10., 15., 20., 25., 35., 45.]
+            for b in [-0.01, -0.02, -0.05, -0.08, -0.12, -0.2, -0.35, -0.5, -0.75, -1.0]
         ]
     else:
         raise ValueError(f"Unsupported fit quality: {fit_quality}")
     bounds = [
-        (np.log(1e-3), np.log(5.0)),  # L0 bounds
+        (np.log(1e-3), np.log(4.0)),  # L0 bounds
         (None, None),                 # A bounds
         (-1.0, 0.0)                   # alpha bounds
     ]
@@ -170,7 +179,9 @@ def get_args():
     parser.add_argument('--selection', type=str, default='random', choices=list(SELECTION))
     parser.add_argument('--input', type=str, required=True)
     parser.add_argument('--output_dir', type=str, required=True)
-    parser.add_argument('--fit_quality', type=str, default='debug', choices=['debug', 'dense'])
+    parser.add_argument(
+        '--fit_quality', type=str, default='debug', choices=['debug', 'dense', 'super_dense']
+    )
     parser.add_argument('--filename', default="history")
 
     parser.add_argument('--plot_figure', action='store_true')
