@@ -88,9 +88,10 @@ def build_surrogate(
     test_x: np.ndarray,
     test_y: np.ndarray | None = None,
     model_type: str = "gp",
+    **kwargs
 ) -> tuple[np.ndarray, float]:
     if model_type in MODELS:
-        model = MODELS[model_type]()
+        model = MODELS[model_type](**kwargs)
     else:
         raise ValueError(f"Unsupported model type: {model_type}")
 
@@ -186,6 +187,12 @@ def get_args():
 
     parser.add_argument('--plot_figure', action='store_true')
 
+    parser.add_argument(
+        '--gp_mean_as_l0', action='store_true', 
+        help="If set, the GP mean function is initialized with the previous iteration's best-fit L0. " \
+        "If not set, the GP mean is a constant function (default)."
+    )
+
     args = parser.parse_args()
     return args
 
@@ -211,13 +218,15 @@ if __name__ == "__main__":
     train_df, test_df_known, test_df_unknown = data_preprocess(df)
 
     # ground truth prep
+    _params_so_far = (0.7, 2.0, -0.05)
     _global_df = pd.concat((train_df, test_df_known))
     print("\nBuilding global surrogate on all data as a baseline...")
     global_pred, global_mse = build_surrogate(
         np.log(_global_df[INPUT_X].to_numpy()),
         _global_df[OUTPUT_Y].to_numpy()[:, None],
         np.log(test_df_known[INPUT_X].to_numpy()),
-        model_type=args.model_type
+        model_type=args.model_type,
+        use_mean_model=True if args.gp_mean_as_l0 else False,
     )
     print("Fitting parametric form on the global surrogate...")
     global_best_params, global_best_loss = build_fit(
@@ -277,6 +286,7 @@ if __name__ == "__main__":
             np.log(train_df.loc[remaining_idx, INPUT_X].to_numpy()),
             test_y=train_df.loc[remaining_idx, OUTPUT_Y].to_numpy(),
             model_type=args.model_type,
+            use_mean_model=True if args.gp_mean_as_l0 else False,
         )
 
         # true loss where observed, predicted loss elsewhere
@@ -287,6 +297,7 @@ if __name__ == "__main__":
         best_params, best_loss = build_fit(df_pred[INPUT_X + ["C", OUTPUT_Y]], fit_quality=args.fit_quality)
         print(f"Iteration {iter_idx}: Fitting loss={best_loss:2.2e}", end="; ")
         _print_fit_results(best_params)
+        _params_so_far = best_params  # for next iteration's GP mean initialization if requested
 
         history.append({
             "iter": iter_idx,
