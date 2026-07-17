@@ -52,23 +52,34 @@ def next_batch_compute(
 
 def data_preprocess(
     df: pd.DataFrame,
+    held_out_type: str = 'N',
+    held_out_C_lower: float = 0.5,
+    C_extrapolation_len: int = 5,
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     df["C"] = 6 * df["N"] * df["D"]
 
     # Keep the max compute as the test point
-    test_df_known = df.loc[df.N == df.N.max()]
+    if held_out_type == 'N':
+        test_df_known = df.loc[df.N == df.N.max()]
+        _upper_lim, _col = df.N.max(), "N"
+    elif held_out_type == 'C':
+        _pseudo_C_max = df.C.max() * held_out_C_lower
+        test_df_known = df.loc[df.C >= _pseudo_C_max]
+        _upper_lim, _col = _pseudo_C_max, "C"
+    else:
+        raise ValueError(f"Unsupported held_out_type: {held_out_type}")
     
     # Create an extrapolation limit as unknown test set
     test_df_unknown = pd.DataFrame.from_dict({
-        "C": [test_df_known.C.max() * 10 ** i for i in range(1, 4)],
-        "N": [None] * 3,
-        "D": [None] * 3,
-        "lr": [None] * 3,
-        "gbsz": [None] * 3,
-        "loss": [None] * 3,
+        "C": [test_df_known.C.max() * 10 ** i for i in range(1, C_extrapolation_len + 1)],
+        "N": [None] * C_extrapolation_len,
+        "D": [None] * C_extrapolation_len,
+        "lr": [None] * C_extrapolation_len,
+        "gbsz": [None] * C_extrapolation_len,
+        "loss": [None] * C_extrapolation_len,
     })
 
-    train_df = df.loc[df.N != df.N.max()]
+    train_df = df.loc[df[_col] < _upper_lim]
     
     return train_df, test_df_known, test_df_unknown
 
@@ -184,9 +195,17 @@ def get_args():
         '--fit_quality', type=str, default='debug', choices=['debug', 'dense', 'super_dense']
     )
     parser.add_argument('--filename', default="history")
-
     parser.add_argument('--plot_figure', action='store_true')
 
+    parser.add_argument(
+        '--held_out_type', type=str, default='N', choices=['N', 'C'],
+        help="Whether to hold out the largest N or the largest C for testing. Default is 'N'."
+    )
+    parser.add_argument(
+        '--held_out_C_lower', type=float, default=0.5,
+        help="held_out_C_lower*C_min defines the threshold for the held-out set when "\
+        "--held_out_type is 'C'. Default is 0.5."
+    )
     parser.add_argument(
         '--gp_mean_as_l0', action='store_true', 
         help="If set, the GP mean function is initialized with the previous iteration's best-fit L0. " \
@@ -215,7 +234,9 @@ if __name__ == "__main__":
     df = pd.read_csv(args.input)
 
     # preprocess data
-    train_df, test_df_known, test_df_unknown = data_preprocess(df)
+    train_df, test_df_known, test_df_unknown = data_preprocess(
+        df, held_out_type=args.held_out_type, held_out_C_lower=args.held_out_C_lower
+    )
 
     # ground truth prep
     _params_so_far = (0.7, 2.0, -0.05)
@@ -359,11 +380,14 @@ if __name__ == "__main__":
             (axes[1, 1], "total_compute_spent", "cumulative compute (C)", "log"),
         ]
         for ax, col, title, yscale in panels:
-            ax.plot(history_df["iter"], history_df[col])
+            if "regret" in title:
+                ax.plot(history_df["iter"], np.minimum.accumulate(history_df[col]))
+            else:
+                ax.plot(history_df["iter"], history_df[col])
             if yscale:
                 ax.set_yscale(yscale)
             ax.set_xlabel("iteration")
-            ax.set_title(title)
+            ax.set_title(title) if "regret" not in title else ax.set_title(f"incumbent {title}")
         axes[0, 0].axhline(0, color="gray", lw=0.5)
 
         # row 2, third column: real vs fantasized parametric fits
@@ -382,14 +406,17 @@ if __name__ == "__main__":
 
         C_grid = np.geomspace(obs_df["C"].min(), C_unknown.max(), 200)
         seen = C_grid <= obs_df["C"].max()
-        for params, color, label in [(real_params, "tab:green", "real"), (fant_params, "red", "fantasized")]:
+        for params, color, label in [(real_params, "tab:green", "subsampled grid"), (fant_params, "red", "fantasized dense grid")]:
             L_hat = functional_form_L0(C_grid, np.asarray(params), return_log_loss=False)
             ax.plot(C_grid[seen], L_hat[seen], color=color, ls="-", label=label)
             ax.plot(C_grid[~seen], L_hat[~seen], color=color, ls="--")
+        L_global_hat = functional_form_L0(C_grid, np.asarray(global_best_params), return_log_loss=False)
+        ax.plot(C_grid[seen], L_global_hat[seen], color="tab:purple", ls="-.", label="all data fit")
+        ax.plot(C_grid[~seen], L_global_hat[~seen], color="tab:purple", ls="--")
         ax.set_xscale("log")
         ax.set_xlabel("C")
         ax.set_ylabel("loss")
-        ax.legend()
+        ax.legend(fontsize=15)
         ax.set_title("real vs fantasized fit (dashed = beyond seen C)")
 
         fig.tight_layout()
