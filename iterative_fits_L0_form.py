@@ -106,7 +106,7 @@ def build_surrogate(
     else:
         raise ValueError(f"Unsupported model type: {model_type}")
 
-    model.fit(train_x, train_y)
+    model.fit(train_x, train_y, **kwargs)
     pred_y = model.predict(test_x)
     mse = None
     if test_y is not None:
@@ -170,7 +170,7 @@ def param_fit_setup_args(
 def _print_fit_results(params: np.ndarray):
     assert len(params) == 3, "Expected 3 parameters: L0, A, alpha"
     L0, A, alpha = params
-    print(f"L(C) = {np.exp(L0):.3f} + {np.exp(A):.3f} * C^({alpha:.4f})\n")
+    print(f"L(C) = {np.exp(L0):.3f} + {np.exp(A):.3f} * C^({alpha:.4f})")
 
 
 def get_args():
@@ -211,6 +211,10 @@ def get_args():
         help="If set, the GP mean function is initialized with the previous iteration's best-fit L0. " \
         "If not set, the GP mean is a constant function (default)."
     )
+    parser.add_argument(
+        '--diagnose_gp', action='store_true',
+        help="If set, prints GP diagnostics (MLL, train MSE, noise, lengthscales, mean parameters) after fitting."
+    )
 
     args = parser.parse_args()
     return args
@@ -248,6 +252,7 @@ if __name__ == "__main__":
         np.log(test_df_known[INPUT_X].to_numpy()),
         model_type=args.model_type,
         use_mean_model=True if args.gp_mean_as_l0 else False,
+        diagnose=args.diagnose_gp,
     )
     print("Fitting parametric form on the global surrogate...")
     global_best_params, global_best_loss = build_fit(
@@ -308,6 +313,7 @@ if __name__ == "__main__":
             test_y=train_df.loc[remaining_idx, OUTPUT_Y].to_numpy(),
             model_type=args.model_type,
             use_mean_model=True if args.gp_mean_as_l0 else False,
+            diagnose=args.diagnose_gp
         )
 
         # true loss where observed, predicted loss elsewhere
@@ -316,7 +322,7 @@ if __name__ == "__main__":
 
         # parametric fit on the mixed data
         best_params, best_loss = build_fit(df_pred[INPUT_X + ["C", OUTPUT_Y]], fit_quality=args.fit_quality)
-        print(f"Iteration {iter_idx}: Fitting loss={best_loss:2.2e}", end="; ")
+        print(f"#Iteration {iter_idx}: Fitting loss={best_loss:2.2e}", end="; ")
         _print_fit_results(best_params)
         _params_so_far = best_params  # for next iteration's GP mean initialization if requested
 
@@ -363,7 +369,7 @@ if __name__ == "__main__":
     print(f"L0: {incumbents['l0']:.3f} (signed)\nA: {incumbents['A']:.3f}\nalpha: {incumbents['alpha']:.4f}\n{'='*30}")
 
     # saving to disk
-    output_dir = Path(args.output_dir)
+    output_dir = Path(args.output_dir) / f"seed_{args.seed}"
     output_dir.mkdir(parents=True, exist_ok=True)
     history_df = pd.DataFrame(history)
     history_df.to_parquet(output_dir / f"{args.filename}.parquet", index=False)
