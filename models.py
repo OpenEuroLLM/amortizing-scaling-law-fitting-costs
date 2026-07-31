@@ -19,21 +19,30 @@ class GPModel(SurrogateModel):
         self._gp = None
         self._likelihood = None
         self.use_mean_model = False
-        if "use_mean_model" in kwargs:
-            self.use_mean_model = kwargs["use_mean_model"]
         self._mean_kwargs = {}
         if "mean_kwargs" in kwargs:
             self._mean_kwargs.update(kwargs["mean_kwargs"])
+        self.mean_form = None
+        if "mean_form" in kwargs:
+            self.mean_form = kwargs["mean_form"]
 
     def fit(self, train_x: np.ndarray, train_y: np.ndarray, max_attempts: int = 10, **kwargs) -> None:
         # lazy import to avoid requiring gpytorch/botorch unless GPModel is used
         import botorch, gpytorch, torch
-        from mean_functions import ScalingLawMean_L0_form as MeanL0
+        from mean_functions import (
+            ScalingLawMean_L0_form as MeanL0,
+            ScalingLawMean_chin3_form as MeanChin3,
+        )
+        _mean_map = {
+            "l0": MeanL0,
+            "chin3": MeanChin3,
+            None: None,
+        }
 
         self._gp = botorch.models.SingleTaskGP(
             torch.tensor(train_x),
             torch.tensor(train_y),
-            mean_module=MeanL0(**self._mean_kwargs) if self.use_mean_model else None,
+            mean_module=_mean_map[self.mean_form](**self._mean_kwargs) if self.mean_form is not None else None,
             outcome_transform=None,
             covar_module=gpytorch.kernels.MaternKernel(ard_num_dims=train_x.shape[1]),
         )
@@ -50,7 +59,12 @@ class GPModel(SurrogateModel):
             print(f"  [GP] n={_n}  MLL/n={mll_val:.3f}  train_mse={train_mse:.2e}")
             print(f"  [GP] n={_n} noise={self._gp.likelihood.noise.item():.2e}")
             print(f"  [GP] n={_n} lengthscales={self._gp.covar_module.lengthscale.detach().numpy().ravel().round(2)}")  # N,D,lr,gbsz
-            print(f"  [GP] n={_n} mean={ {n: round(p.item(), 3) for n, p in self._gp.mean_module.named_parameters()} }")
+            _mean = self._gp.mean_module
+            _mean_vals = (
+                _mean.named_values() if hasattr(_mean, "named_values")
+                else {n: p.item() for n, p in _mean.named_parameters()}
+            )
+            print(f"  [GP] n={_n} mean={ {k: round(v, 3) for k, v in _mean_vals.items()} }")
 
         self._gp.eval()
 

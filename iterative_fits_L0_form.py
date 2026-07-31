@@ -207,9 +207,14 @@ def get_args():
         "--held_out_type is 'C'. Default is 0.5."
     )
     parser.add_argument(
-        '--gp_mean_as_l0', action='store_true', 
-        help="If set, the GP mean function is initialized with the previous iteration's best-fit L0. " \
+        '--gp_mean_as_l0', action='store_true',
+        help="If set, the GP mean is the parametric L0 form (fitted during MLL). " \
         "If not set, the GP mean is a constant function (default)."
+    )
+    parser.add_argument(
+        '--gp_mean_warmstart', action='store_true',
+        help="Initialize the GP mean with the best parametric fit seen so far "
+        "(lowest in-data fit loss). Only relevant when --gp_mean_as_l0 is set."
     )
     parser.add_argument(
         '--diagnose_gp', action='store_true',
@@ -243,7 +248,8 @@ if __name__ == "__main__":
     )
 
     # ground truth prep
-    _params_so_far = (0.7, 2.0, -0.05)
+    # incumbent parametric fit (lowest in-data fit loss), used to warm-start the GP mean
+    _best_fit_loss, _best_fit_params = np.inf, None
     _global_df = pd.concat((train_df, test_df_known))
     print("\nBuilding global surrogate on all data as a baseline...")
     global_pred, global_mse = build_surrogate(
@@ -251,7 +257,7 @@ if __name__ == "__main__":
         _global_df[OUTPUT_Y].to_numpy()[:, None],
         np.log(test_df_known[INPUT_X].to_numpy()),
         model_type=args.model_type,
-        use_mean_model=True if args.gp_mean_as_l0 else False,
+        mean_form="l0" if args.gp_mean_as_l0 else None,
         diagnose=args.diagnose_gp,
     )
     print("Fitting parametric form on the global surrogate...")
@@ -312,7 +318,11 @@ if __name__ == "__main__":
             np.log(train_df.loc[remaining_idx, INPUT_X].to_numpy()),
             test_y=train_df.loc[remaining_idx, OUTPUT_Y].to_numpy(),
             model_type=args.model_type,
-            use_mean_model=True if args.gp_mean_as_l0 else False,
+            mean_form="l0" if args.gp_mean_as_l0 else None,
+            mean_kwargs=(
+                {"init_params": _best_fit_params}
+                if args.gp_mean_warmstart and _best_fit_params is not None else {}
+            ),
             diagnose=args.diagnose_gp
         )
 
@@ -322,9 +332,10 @@ if __name__ == "__main__":
 
         # parametric fit on the mixed data
         best_params, best_loss = build_fit(df_pred[INPUT_X + ["C", OUTPUT_Y]], fit_quality=args.fit_quality)
+        if best_loss < _best_fit_loss:  # incumbent by in-data fit loss
+            _best_fit_loss, _best_fit_params = best_loss, best_params
         print(f"#Iteration {iter_idx}: Fitting loss={best_loss:2.2e}", end="; ")
         _print_fit_results(best_params)
-        _params_so_far = best_params  # for next iteration's GP mean initialization if requested
 
         history.append({
             "iter": iter_idx,
