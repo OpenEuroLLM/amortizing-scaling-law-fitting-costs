@@ -59,7 +59,7 @@ class GPModel(SurrogateModel):
         import torch
 
         with torch.no_grad():
-            return self._gp.posterior(torch.tensor(X_test)).mean.numpy()
+            return self._gp.posterior(torch.tensor(X_test)).mean.numpy().squeeze(-1)
 
 
 class TabPFNModel(SurrogateModel):
