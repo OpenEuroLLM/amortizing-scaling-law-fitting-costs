@@ -207,4 +207,10 @@ class LocalSearch(DataSelection):
     ) -> int:
         raise NotImplementedError("LocalSearch does not support next_point selection yet.")
 
+
+SELECTION = {
+    "random": RandomSelection,
+    "local_search": LocalSearch,
+}
+
 # end of file
