@@ -7,12 +7,13 @@ from pathlib import Path
 from scaling.utils import fit_parametric_form, functional_form_L0, get_pareto_frontier
 
 from models import GPModel
-from selection import RandomSelection, LocalSearch
+from selection import RandomSelection, LocalSearch, MaxVarianceSelection
 
 
 SELECTION = {
     "random": RandomSelection,
     "local_search": LocalSearch,
+    "max_variance": MaxVarianceSelection,
 }
 
 MODELS = {
@@ -295,7 +296,18 @@ if __name__ == "__main__":
 
         # sample a new point under the cost envelope; its C is this iteration's cost
         pool = next_batch_compute(train_df, acquired_idx, C_max=C_lim, C_window=args.C_window)
-        new_idx = splitter.next_point(train_df, pool.index)
+        # surrogate-guided selectors (e.g. max_variance) need a GP fit on the current
+        # observations *before* picking; fit it once and hand it to next_point.
+        sel_surrogate = None
+        if getattr(splitter, "needs_surrogate", False) and len(acquired_idx) >= 2:
+            _obs = train_df.loc[acquired_idx]
+            try:
+                sel_surrogate = MODELS[args.model_type]()
+                sel_surrogate.fit(np.log(_obs[INPUT_X].to_numpy()), _obs[OUTPUT_Y].to_numpy()[:, None])
+            except Exception:
+                sel_surrogate = None
+        new_idx = splitter.next_point(train_df, pool.index,
+                                      acquired_idx=acquired_idx, surrogate=sel_surrogate)
         acquired_idx = acquired_idx.append(pd.Index([new_idx]))
         iter_compute = train_df.loc[new_idx, "C"]
 
