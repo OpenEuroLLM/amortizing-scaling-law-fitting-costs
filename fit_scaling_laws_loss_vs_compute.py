@@ -2,6 +2,8 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 
+from pathlib import Path
+
 import seaborn as sns
 from plot_utils import N_palette, D_palette, Ns, Ds, N_color_map, D_color_map, FORMAT_BILLIONS, N_ticks, D_ticks
 from scipy.optimize import curve_fit
@@ -9,8 +11,7 @@ from scipy.optimize import curve_fit
 
 loss_key = 'loss'
 
-df = pd.read_csv('../dense_english_scaling_results/data/preprocessed/all_points_clean.csv')
-#df = pd.read_csv('../../data/model_based/model_based_scaling_laws_subset_20_seed_1.csv')
+df = pd.read_csv('data/preprocessed/oellm_english.csv')
 df.head()
 
 # Any duplicate runs
@@ -144,5 +145,6 @@ ax.legend(
 )
 
 plt.tight_layout()
-plt.savefig('../dense_english_scaling_results/fig/model/fit_compute.png')
+Path('results').mkdir(exist_ok=True)
+plt.savefig('results/fit_compute.png')
 plt.show()

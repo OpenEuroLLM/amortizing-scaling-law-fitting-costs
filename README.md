@@ -19,8 +19,21 @@ A standard scaling law study sweeps many combinations of model size `N`, dataset
 | `models.py` | Surrogate model backends: GP (BoTorch/GPyTorch), TabPFN, AutoGluon                                              |
 | `selection.py` | Training data selection strategies: random, local search                                                        |
 | `fit_scaling_laws_loss_vs_compute.py` | Standalone script using the original code from Niccolo for fitting and plotting a power law on the full dataset |
+| `preprocessing/fetch_data.py` | Downloads the raw CSV from each source repo into `data/raw/` |
+| `preprocessing/preprocess.py` | Adapts each raw CSV into the common `N, D, lr, gbsz, loss` schema in `data/preprocessed/` |
 
 ## Usage
+
+### Data preprocessing
+
+```bash
+uv run python preprocessing/fetch_data.py    # -> data/raw/<source>/...
+uv run python preprocessing/preprocess.py    # -> data/preprocessed/<source>.csv
+```
+
+`dense_english_scaling_results` and `dense_multilingual_models_scaling_results` are private OpenEuroLLM repos. So it needs your local git to already be able to authenticate to them. Request access first if you can't clone them yourself.
+
+Sources: `oellm_english`, `oellm_multilingual`, `steplaw`, `porian` (arXiv:2406.19146), `gemstones` (arXiv:2502.06857). `gemstones` has no `lr`/`gbsz` in the source data, so those columns are left blank -- usable with `fit_scaling_laws_loss_vs_compute.py` but not `model_based_fits.py`/`iterative_fits_L0_form.py`.
 
 ### Surrogate-based fit
 
@@ -42,7 +55,7 @@ Results are written to `output_dir` as `results_{model_type}_{selection}_{num_po
 python fit_scaling_laws_loss_vs_compute.py
 ```
 
-Reads `../../data/preprocessed/all_points_clean.csv`, fits a power law on the full loss envelope, and saves a plot to `../../fig/model/fit_compute.png`.
+Reads `data/preprocessed/oellm_english.csv`, fits a power law on the full loss envelope, and saves a plot to `results/fit_compute.png`.
 
 ## Input data format
 
