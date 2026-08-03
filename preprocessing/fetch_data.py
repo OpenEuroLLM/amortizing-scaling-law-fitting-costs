@@ -1,13 +1,7 @@
-"""Fetch the raw source files from their origin repos.
+"""Fetch raw source files from their origin repositories.
 
-GIT_SOURCES are pulled via a sparse, depth-1 clone of just the one file's
-directory, using whatever git credentials are already configured locally
-(e.g. Windows Credential Manager) -- the same way a normal `git clone` of
-a private repo would work. This avoids hardcoding tokens and works
-uniformly whether the source repo is public or private.
-
-URL_SOURCES are single files at a stable public URL, fetched with a plain
-HTTP download -- no need for git's sparse-clone machinery.
+GIT_SOURCES are pulled via a sparse, depth-1 clone of a single file's
+directory. URL_SOURCES are downloaded directly over HTTP.
 """
 import shutil
 import subprocess
@@ -18,14 +12,18 @@ from pathlib import Path
 RAW_DIR = Path(__file__).parent.parent / "data" / "raw"
 
 GIT_SOURCES = {
+
     "oellm_english": {
         "repo": "https://github.com/OpenEuroLLM/dense_english_scaling_results.git",
         "path": "data/preprocessed/all_points_clean.csv",
     },
+    
     "oellm_multilingual": {
         "repo": "https://github.com/OpenEuroLLM/dense_multilingual_models_scaling_results.git",
         "path": "scaling_laws/data/preprocessed/decay_points_clean.csv",
     },
+    # Li et al., "Predictable Scale: Part I, Step Law -- Optimal Hyperparameter
+    # Scaling Law in Large Language Model Pretraining", arXiv:2503.04715.
     "steplaw": {
         "repo": "https://github.com/step-law/steplaw.git",
         "path": "data/dense_lr_bs_loss.csv",
@@ -33,13 +31,37 @@ GIT_SOURCES = {
 }
 
 URL_SOURCES = {
+    # Porian et al., "Resolving Discrepancies in Compute-Optimal Scaling of
+    # Language Models", arXiv:2406.19146.
     "porian": {
         "url": "https://raw.githubusercontent.com/formll/resolving-scaling-law-discrepancies/main/data/experiment_results.pickle.xz",
         "filename": "experiment_results.pickle.xz",
     },
+    # McLeish et al., "Gemstones: A Model Suite for Multi-Faceted Scaling
+    # Laws", arXiv:2502.06857.
     "gemstones": {
         "url": "https://raw.githubusercontent.com/mcleish7/gemstone-scaling-laws/main/wandb_dfs/wandb_df_for_fitting_hot.jsonl",
         "filename": "wandb_df_for_fitting_hot.jsonl",
+    },
+}
+
+# HuggingFace-style train/test parquet splits, from the benchmark suite of
+# "Spend Less, Fit Better: Budget-Efficient Scaling Law Fitting via Active
+# Experiment Selection" (arXiv:2604.22753). Only the sub-datasets whose
+# columns map onto N/D/lr/gbsz/loss (or a subset of it) are included here --
+# see NOTES.md for the other sub-datasets and why they don't fit.
+SPLIT_URL_SOURCES = {
+    "activesl_lr_bsz": {
+        "base_url": "https://raw.githubusercontent.com/PlanarG/active-sl/main/benchmark/dataset/lr_bsz_scaling_law",
+        "filenames": ["train-00000-of-00001.parquet", "test-00000-of-00001.parquet"],
+    },
+    "activesl_farseer": {
+        "base_url": "https://raw.githubusercontent.com/PlanarG/active-sl/main/benchmark/dataset/farseer_scaling_law",
+        "filenames": ["train-00000-of-00001.parquet", "test-00000-of-00001.parquet"],
+    },
+    "activesl_data_constrained": {
+        "base_url": "https://raw.githubusercontent.com/PlanarG/active-sl/main/benchmark/dataset/data_constrained_scaling_law",
+        "filenames": ["train-00000-of-00001.parquet", "test-00000-of-00001.parquet"],
     },
 }
 
@@ -69,12 +91,23 @@ def fetch_url(name: str, url: str, filename: str) -> Path:
     return dest
 
 
+def fetch_split(name: str, base_url: str, filenames: list) -> Path:
+    dest_dir = RAW_DIR / name
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    for filename in filenames:
+        urllib.request.urlretrieve(f"{base_url}/{filename}", dest_dir / filename)
+    return dest_dir
+
+
 def main():
     for name, cfg in GIT_SOURCES.items():
         dest = fetch_git(name, cfg["repo"], cfg["path"])
         print(f"{name}: fetched -> {dest}")
     for name, cfg in URL_SOURCES.items():
         dest = fetch_url(name, cfg["url"], cfg["filename"])
+        print(f"{name}: fetched -> {dest}")
+    for name, cfg in SPLIT_URL_SOURCES.items():
+        dest = fetch_split(name, cfg["base_url"], cfg["filenames"])
         print(f"{name}: fetched -> {dest}")
 
 

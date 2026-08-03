@@ -33,7 +33,31 @@ uv run python preprocessing/preprocess.py    # -> data/preprocessed/<source>.csv
 
 `dense_english_scaling_results` and `dense_multilingual_models_scaling_results` are private OpenEuroLLM repos. So it needs your local git to already be able to authenticate to them. Request access first if you can't clone them yourself.
 
-Sources: `oellm_english`, `oellm_multilingual`, `steplaw`, `porian` (arXiv:2406.19146), `gemstones` (arXiv:2502.06857). `gemstones` has no `lr`/`gbsz` in the source data, so those columns are left blank -- usable with `fit_scaling_laws_loss_vs_compute.py` but not `model_based_fits.py`/`iterative_fits_L0_form.py`.
+| Source | Origin | Has `lr`/`gbsz`? |
+|---|---|---|
+| `oellm_english` | OpenEuroLLM dense English scaling results (private repo) | yes |
+| `oellm_multilingual` | OpenEuroLLM dense multilingual scaling results (private repo) | yes |
+| `steplaw` | Li et al., arXiv:2503.04715 | yes |
+| `porian` | Porian et al., arXiv:2406.19146 | yes |
+| `gemstones` | McLeish et al., arXiv:2502.06857 | no |
+| `activesl_lr_bsz` | active-experiment-selection benchmark, arXiv:2604.22753 | yes |
+| `activesl_farseer` | active-experiment-selection benchmark, arXiv:2604.22753 | no |
+| `activesl_data_constrained` | active-experiment-selection benchmark, arXiv:2604.22753 | no |
+| `warmstart` | warmstarting-for-scaling-language-models runs (no public source -- see below) | yes |
+
+Sources with no `lr`/`gbsz` in the underlying data leave those columns blank -- usable with `fit_scaling_laws_loss_vs_compute.py` but not `model_based_fits.py`/`iterative_fits_L0_form.py`, which need all four features.
+
+`warmstart` has no automated fetch step: its raw file has no public source, so `data/raw/warmstart/warmstart_runs_flattened.parquet` must be placed manually before running `preprocess.py`.
+
+5 sub-datasets from the active-experiment-selection benchmark (arXiv:2604.22753) aren't included, because their columns don't reduce to `N, D, lr, gbsz, loss` at all yet:
+
+| Sub-dataset | Why it's excluded |
+|---|---|
+| `domain_mixture_scaling_law` | 5 mixture-proportion features and 5 per-domain losses -- no `N`/`D` concept |
+| `moe_scaling_law` | `num_experts` + `dense_parameter_count` -- no `D`/`lr`/`gbsz` |
+| `parallel_scaling_law` | inference-time `parallel_size` -- no `D`/`lr`/`gbsz` |
+| `sparsity_scaling_law` | two separate `N`s (active/dense) and two `D`s |
+| `vocab_scaling_law` | `vocab_size` + `num_characters` in place of tokens, and an already vocab-normalized loss |
 
 ### Surrogate-based fit
 
