@@ -37,20 +37,17 @@ URL_SOURCES = {
         "url": "https://raw.githubusercontent.com/formll/resolving-scaling-law-discrepancies/main/data/experiment_results.pickle.xz",
         "filename": "experiment_results.pickle.xz",
     },
-    # McLeish et al., "Gemstones: A Model Suite for Multi-Faceted Scaling
-    # Laws", arXiv:2502.06857.
-    "gemstones": {
-        "url": "https://raw.githubusercontent.com/mcleish7/gemstone-scaling-laws/main/wandb_dfs/wandb_df_for_fitting_hot.jsonl",
-        "filename": "wandb_df_for_fitting_hot.jsonl",
-    },
 }
 
-# HuggingFace-style train/test parquet splits, from the benchmark suite of
-# "Spend Less, Fit Better: Budget-Efficient Scaling Law Fitting via Active
-# Experiment Selection" (arXiv:2604.22753). Only the sub-datasets whose
-# columns map onto N/D/lr/gbsz/loss (or a subset of it) are included here --
-# see NOTES.md for the other sub-datasets and why they don't fit.
+# Sources fetched as multiple files sharing a base URL, downloaded into one
+# raw dir (preprocess.py then adapts each file separately or concatenates
+# them, depending on the source -- see ADAPTERS there).
 SPLIT_URL_SOURCES = {
+    # HuggingFace-style train/test parquet splits, from the benchmark suite of
+    # "Spend Less, Fit Better: Budget-Efficient Scaling Law Fitting via Active
+    # Experiment Selection" (arXiv:2604.22753). Only the sub-datasets whose
+    # columns map onto N/D/lr/gbsz/loss (or a subset of it) are included here
+    # -- see NOTES.md for the other sub-datasets and why they don't fit.
     "activesl_lr_bsz": {
         "base_url": "https://raw.githubusercontent.com/PlanarG/active-sl/main/benchmark/dataset/lr_bsz_scaling_law",
         "filenames": ["train-00000-of-00001.parquet", "test-00000-of-00001.parquet"],
@@ -62,6 +59,30 @@ SPLIT_URL_SOURCES = {
     "activesl_data_constrained": {
         "base_url": "https://raw.githubusercontent.com/PlanarG/active-sl/main/benchmark/dataset/data_constrained_scaling_law",
         "filenames": ["train-00000-of-00001.parquet", "test-00000-of-00001.parquet"],
+    },
+    # McLeish et al., "Gemstones: A Model Suite for Multi-Faceted Scaling
+    # Laws", arXiv:2502.06857. Each file is a distinct dataset variant (token
+    # range / checkpoint density / LR schedule), adapted separately in
+    # preprocess.py -- see data/raw/gemstones/README.md for what each one is.
+    "gemstones": {
+        "base_url": "https://raw.githubusercontent.com/mcleish7/gemstone-scaling-laws/main/wandb_dfs",
+        "filenames": [
+            "wandb_df_for_fitting_hot.jsonl",
+            "wandb_df_for_fitting_hot_477.jsonl",
+            "wandb_df_for_fitting_hot_100b+.jsonl",
+            "wandb_df_for_fitting_hot_100b+_477.jsonl",
+            "wandb_df_for_fitting_hot_120b+_only.jsonl",
+            "wandb_df_for_fitting_hot_120b+_only_477.jsonl",
+            "wandb_df_for_fitting_hot_100b+_512x.jsonl",
+            "wandb_df_for_fitting_cool_begin.jsonl",
+            "wandb_df_for_fitting_cool_end.jsonl",
+            "wandb_df_for_fitting_lr_ablation_hot.jsonl",
+            "wandb_df_for_fitting_lr_ablation_hot_477.jsonl",
+            "wandb_df_for_fitting_hot_sampled_like_chinchilla.jsonl",
+            "wandb_df_for_fitting_lr_ablation_hot_sampled_like_chinchilla.jsonl",
+            "wandb_df_for_fitting_slim_chinchilla.jsonl",
+            "wandb_df_for_fitting_lr_ablation_slim_chinchilla.jsonl",
+        ],
     },
 }
 

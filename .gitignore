@@ -4,7 +4,12 @@
 *.json
 
 
-data/
+data/*
+!data/raw/
+data/raw/*
+!data/raw/gemstones/
+data/raw/gemstones/*
+!data/raw/gemstones/README.md
 output*/
 results/
 
