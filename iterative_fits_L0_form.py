@@ -189,6 +189,11 @@ def get_args():
         help="Factors on the max. seen compute to determine permissible range for sampling."
     )
     parser.add_argument('--model_type', type=str, default='gp', choices=['gp'])
+    parser.add_argument(
+        '--model_free', action='store_true',
+        help="Model-free mode: fit L(C) directly on the observed compute-optimal points, skipping "
+        "the GP surrogate grid-infill. Turns e.g. --selection random into a fully model-free baseline."
+    )
     parser.add_argument('--selection', type=str, default='random', choices=list(SELECTION))
     parser.add_argument('--input', type=str, required=True)
     parser.add_argument('--output_dir', type=str, required=True)
@@ -269,6 +274,12 @@ if __name__ == "__main__":
 
     # main loop here
     splitter = SELECTION[args.selection](seed=args.seed)
+    # model-free skips the surrogate entirely; a surrogate-based selector can't run without it.
+    if args.model_free and getattr(splitter, "needs_surrogate", False):
+        raise ValueError(
+            f"--model_free is incompatible with surrogate-based selection '{args.selection}' "
+            f"(it needs the GP to pick points). Use a surrogate-free selector, e.g. --selection random."
+        )
     rng = np.random.RandomState(args.seed)
 
     # initialization: seed with the cheapest point, then fill up to init_points under the envelope
@@ -306,23 +317,26 @@ if __name__ == "__main__":
         observations = train_df.loc[acquired_idx]
         remaining_idx = train_df.index.difference(acquired_idx)
 
-        # surrogate: fit on observations (log-features), predict the unacquired rest
-        pred_y, heldout_mse = build_surrogate(
-            np.log(observations[INPUT_X].to_numpy()),
-            observations[OUTPUT_Y].to_numpy()[:, None],
-            np.log(train_df.loc[remaining_idx, INPUT_X].to_numpy()),
-            test_y=train_df.loc[remaining_idx, OUTPUT_Y].to_numpy(),
-            model_type=args.model_type,
-            use_mean_model=True if args.gp_mean_as_l0 else False,
-            diagnose=args.diagnose_gp
-        )
-
-        # true loss where observed, predicted loss elsewhere
-        df_pred = train_df.copy()
-        df_pred.loc[remaining_idx, OUTPUT_Y] = pred_y
-
-        # parametric fit on the mixed data
-        best_params, best_loss = build_fit(df_pred[INPUT_X + ["C", OUTPUT_Y]], fit_quality=args.fit_quality)
+        if args.model_free:
+            # model-free: fit L(C) directly on the observed points, no surrogate infill
+            heldout_mse = float("nan")
+            best_params, best_loss = build_fit(
+                observations[INPUT_X + ["C", OUTPUT_Y]], fit_quality=args.fit_quality)
+        else:
+            # surrogate: fit a GP on observations (log-features), predict the unacquired rest
+            pred_y, heldout_mse = build_surrogate(
+                np.log(observations[INPUT_X].to_numpy()),
+                observations[OUTPUT_Y].to_numpy()[:, None],
+                np.log(train_df.loc[remaining_idx, INPUT_X].to_numpy()),
+                test_y=train_df.loc[remaining_idx, OUTPUT_Y].to_numpy(),
+                model_type=args.model_type,
+                use_mean_model=True if args.gp_mean_as_l0 else False,
+                diagnose=args.diagnose_gp
+            )
+            # true loss where observed, predicted loss elsewhere, then fit the mixed data
+            df_pred = train_df.copy()
+            df_pred.loc[remaining_idx, OUTPUT_Y] = pred_y
+            best_params, best_loss = build_fit(df_pred[INPUT_X + ["C", OUTPUT_Y]], fit_quality=args.fit_quality)
         print(f"#Iteration {iter_idx}: Fitting loss={best_loss:2.2e}", end="; ")
         _print_fit_results(best_params)
         _params_so_far = best_params  # for next iteration's GP mean initialization if requested
