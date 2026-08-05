@@ -25,6 +25,7 @@ df["C"] = 6 * df["N"] * df["D"]
 # Optimal (lr, gbsz) for each (N, D)
 df_best_lr_gbsz = df.loc[df.groupby(["N", "D"])[loss_key].idxmin()].reset_index(drop=True)
 df_best_lr_gbsz = df_best_lr_gbsz[df_best_lr_gbsz.N != 1.7e9]
+N_color_map = dict(zip(sorted(df_best_lr_gbsz["N"].unique()), N_palette))
 
 # Extract Pareto points of L vs C.
 df_env = df_best_lr_gbsz.sort_values(["C", loss_key])
