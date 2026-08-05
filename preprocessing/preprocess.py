@@ -278,19 +278,32 @@ def main():
         help="Also write extra columns beyond the common "
         f"{COLUMNS} schema (e.g. width/depth/warmup iters, etc.).",
     )
+    parser.add_argument(
+        "--sources",
+        nargs="+",
+        choices=list(ADAPTERS),
+        default=None,
+        help="Only preprocess these sources (default: all sources).",
+    )
     args = parser.parse_args()
+    sources = args.sources or list(ADAPTERS)
 
     OUT_DIR.mkdir(parents=True, exist_ok=True)
-    for name, (adapt, filenames, filetype) in ADAPTERS.items():
+    for name in sources:
+        adapt, filenames, filetype = ADAPTERS[name]
 
         raw_dir = RAW_DIR / (GEMSTONE_RAW_DIR if name in GEMSTONE_VARIANTS else name)
-        if isinstance(filenames, list):
-            df = pd.concat(
-                [READERS[filetype](raw_dir / f) for f in filenames],
-                ignore_index=True,
-            )
-        else:
-            df = READERS[filetype](raw_dir / filenames)
+        try:
+            if isinstance(filenames, list):
+                df = pd.concat(
+                    [READERS[filetype](raw_dir / f) for f in filenames],
+                    ignore_index=True,
+                )
+            else:
+                df = READERS[filetype](raw_dir / filenames)
+        except FileNotFoundError:
+            print(f"{name}: raw data not found under {raw_dir}, skipping")
+            continue
         out = adapt(df)
         if not args.extended:
             out = out[COLUMNS]
