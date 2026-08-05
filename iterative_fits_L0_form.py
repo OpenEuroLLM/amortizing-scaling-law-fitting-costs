@@ -165,8 +165,8 @@ def get_args():
         "'chinchilla3': L(N,D) = E + A/N^alpha + B/D^beta (Chinchilla Approach 3). "
         "'chinchilla_interaction': chinchilla3 plus an N*D interaction term with its own "
         "single exponent, L(N,D) = E + A/N^alpha + B/D^beta + G/(N*D)^gamma. "
-        "'width_depth': chinchilla3-shaped form fit against 'width'/'depth' columns instead "
-        "of N/D. 'steplaw_lr'/'steplaw_bsz': Step Law (arXiv:2503.04715) optimal LR/batch-size "
+        "'width_depth': L(width,depth,D) = E + A/width^alpha + B/depth^beta + F/D^gamma. "
+        "'steplaw_lr'/'steplaw_bsz': Step Law (arXiv:2503.04715) optimal LR/batch-size "
         "power laws -- fit these with build_fit(..., y_name='lr'/'gbsz'); they have no L-vs-C "
         "marginalization, so don't drive them through this script's C-extrapolation path."
     )
