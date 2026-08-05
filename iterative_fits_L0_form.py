@@ -1,4 +1,5 @@
 import argparse
+import warnings
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
@@ -306,7 +307,16 @@ if __name__ == "__main__":
             try:
                 sel_surrogate = MODELS[args.model_type]()
                 sel_surrogate.fit(np.log(_obs[INPUT_X].to_numpy()), _obs[OUTPUT_Y].to_numpy()[:, None])
-            except Exception:
+            except Exception as e:
+                # GP fit can raise NotPSDError: the kernel matrix is ill-conditioned (no inverse --
+                # a kernel must be positive-definite), which happens with few / near-duplicate points.
+                # We fall back to a random pick for this one iteration; warn so that's not silent.
+                warnings.warn(
+                    f"[iter {iter_idx - args.init_points}] selection GP fit failed "
+                    f"({type(e).__name__}: {e}); using a RANDOM pick this iteration "
+                    f"instead of '{args.selection}'.",
+                    RuntimeWarning, stacklevel=2,
+                )
                 sel_surrogate = None
         new_idx = splitter.next_point(train_df, pool.index,
                                       acquired_idx=acquired_idx, surrogate=sel_surrogate)
