@@ -31,6 +31,7 @@ class ParametricForm:
     name: str
     func: Callable                                       # (data, params, return_log_loss=True) -> L or log L
     input_cols: list[str]                                 # df columns fed as `data` to func, in order
+    target: str                                           # df column build_fit() fits against by default
     use_pareto: bool                                       # restrict to the loss envelope before fitting
     initial_grid: Callable[[str], list[list[float]]]        # fit_quality -> list of optimizer-space init points
     bounds: list[tuple]                                    # bounds on optimizer-space params, same order as init
@@ -87,6 +88,7 @@ L0_FORM = ParametricForm(
     name="L0",
     func=functional_form_L0,
     input_cols=["C"],
+    target="loss",
     use_pareto=True,
     initial_grid=_l0_initial_grid,
     bounds=[
@@ -190,6 +192,7 @@ CHINCHILLA3_FORM = ParametricForm(
     name="chinchilla3",
     func=functional_form_chin3,
     input_cols=["N", "D"],
+    target="loss",
     use_pareto=False,
     initial_grid=_chin3_initial_grid,
     bounds=[
@@ -267,6 +270,7 @@ CHINCHILLA_INTERACTION_FORM = ParametricForm(
     name="chinchilla_interaction",
     func=functional_form_chin_interaction,
     input_cols=["N", "D"],
+    target="loss",
     use_pareto=False,
     initial_grid=_chin_interaction_initial_grid,
     bounds=[
@@ -327,6 +331,7 @@ WIDTH_DEPTH_FORM = ParametricForm(
     name="width_depth",
     func=functional_form_width_depth,
     input_cols=["width", "depth", "D"],
+    target="loss",
     use_pareto=False,
     initial_grid=_chin_interaction_initial_grid,
     bounds=[
@@ -349,11 +354,10 @@ WIDTH_DEPTH_FORM = ParametricForm(
 # Step Law optimal LR / batch size (Wang et al. 2025, arXiv:2503.04715)
 # ============================================================
 # These predict *hyperparameters*, not loss: eta_opt(N,D) = A*N^p*D^q, B_opt(D) = A'*D^r.
-# They plug into `build_fit`/`fit_parametric_form` like any other form (fit with
-# `y_name='lr'` or `y_name='gbsz'` instead of the default 'loss'), but they have no
-# meaningful L-vs-C marginalization, so `to_L_vs_C` raises rather than silently returning
-# loss-shaped nonsense -- don't drive these through `iterative_fits_L0_form.py`'s
-# C-extrapolation path.
+# They plug into `build_fit`/`fit_parametric_form` like any other form (their `target` is
+# 'lr'/'gbsz' instead of 'loss'), but they have no meaningful L-vs-C marginalization, so
+# `to_L_vs_C` raises rather than silently returning loss-shaped nonsense -- don't drive
+# these through `iterative_fits_L0_form.py`'s C-extrapolation path.
 
 def _steplaw_no_L_vs_C(C_grid: np.ndarray, params: np.ndarray) -> np.ndarray:
     raise NotImplementedError(
@@ -399,6 +403,7 @@ STEPLAW_LR_FORM = ParametricForm(
     name="steplaw_lr",
     func=functional_form_steplaw_lr,
     input_cols=["N", "D"],
+    target="lr",
     use_pareto=False,
     initial_grid=_steplaw_lr_initial_grid,
     bounds=[(None, None), (None, None), (None, None)],
@@ -438,6 +443,7 @@ STEPLAW_BSZ_FORM = ParametricForm(
     name="steplaw_bsz",
     func=functional_form_steplaw_bsz,
     input_cols=["D"],
+    target="gbsz",
     use_pareto=False,
     initial_grid=_steplaw_bsz_initial_grid,
     bounds=[(None, None), (None, None)],
