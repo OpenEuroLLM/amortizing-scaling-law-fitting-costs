@@ -7,13 +7,14 @@ from pathlib import Path
 from scaling.utils import fit_parametric_form, functional_form_L0, get_pareto_frontier
 
 from models import GPModel
-from selection import RandomSelection, LocalSearch, MaxVarianceSelection
+from selection import RandomSelection, LocalSearch, MaxVarianceSelection, FarthestPointSelection
 
 
 SELECTION = {
     "random": RandomSelection,
     "local_search": LocalSearch,
     "max_variance": MaxVarianceSelection,
+    "farthest_point": FarthestPointSelection,
 }
 
 MODELS = {
@@ -298,6 +299,7 @@ if __name__ == "__main__":
         pool = next_batch_compute(train_df, acquired_idx, C_max=C_lim, C_window=args.C_window)
         # surrogate-guided selectors (e.g. max_variance) need a GP fit on the current
         # observations *before* picking; fit it once and hand it to next_point.
+        # farthest_point / random ignore `surrogate` and use `acquired_idx` instead.
         sel_surrogate = None
         if getattr(splitter, "needs_surrogate", False) and len(acquired_idx) >= 2:
             _obs = train_df.loc[acquired_idx]
