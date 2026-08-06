@@ -37,7 +37,8 @@ uv run python preprocessing/preprocess.py    # -> data/preprocessed/<source>.csv
 |---|---|---|
 | `oellm_english` | OpenEuroLLM dense English scaling results (private repo) | yes |
 | `oellm_multilingual` | OpenEuroLLM dense multilingual scaling results (private repo) | yes |
-| `steplaw` | Li et al., arXiv:2503.04715 | yes |
+| `steplaw_dense` | Li et al., arXiv:2503.04715 | yes |
+| `steplaw_moe` | Li et al., arXiv:2503.04715 | yes |
 | `porian` | Porian et al., arXiv:2406.19146 | yes |
 | `gemstones` | McLeish et al., arXiv:2502.06857 | no |
 | `activesl_lr_bsz` | active-experiment-selection benchmark, arXiv:2604.22753 | yes |
@@ -58,6 +59,17 @@ Sources with no `lr`/`gbsz` in the underlying data leave those columns blank -- 
 | `parallel_scaling_law` | inference-time `parallel_size` -- no `D`/`lr`/`gbsz` |
 | `sparsity_scaling_law` | two separate `N`s (active/dense) and two `D`s |
 | `vocab_scaling_law` | `vocab_size` + `num_characters` in place of tokens, and an already vocab-normalized loss |
+
+### N-variant vocabulary
+
+`N` can mean different things depending on whether the embedding and/or output head are counted. Where a preprocessed CSV has an `N_definition` column or extra `N_*` columns, this is the shared vocabulary (dataset-specific READMEs and code comments link here instead of repeating it):
+
+| Name | Definition |
+|---|---|
+| `N_total` | Every trainable parameter (embedding/head counted once if tied, twice if untied). Porian et al. (arXiv:2406.19146) call this `N_exact` -- the name `porian.csv` uses for its own column. |
+| `N_ne` | Excludes both the input embedding and output head/unembedding matrices ("non-embedding"). Porian et al. call this `N_Kaplan`, after Kaplan et al.'s original convention -- the name `porian.csv` uses for its own column. |
+| `N_Porian` | Porian et al.'s own default: excludes the input embedding but includes the head; close to `N_total` when embeddings are tied, since the head then reuses the embedding matrix. Only appears in `porian.csv`. |
+| `N_eff` | Porian et al.'s "effective" parameter count: `N_Porian` adjusted upward for attention-operation FLOPs (bigger relative effect on smaller models). Only appears in `porian.csv`. |
 
 ### Surrogate-based fit
 

@@ -14,22 +14,8 @@ OUT_DIR = Path(__file__).parent.parent / "data" / "preprocessed"
 COLUMNS = ["N", "D", "lr", "gbsz", "loss"]
 
 # (depth, width) -> parameter count in millions, from Table 2, Appendix B of
-# Porian et al. (arXiv:2406.19146). Four counting conventions, per the paper's
-# Section 2.1 / Table 2 footnote (embedding and unembedding/head are tied):
-#   N_Porian: the paper's own default "N" -- parameters in all linear layers,
-#             excluding the embedding layer but including the head. Since the
-#             head reuses the tied embedding matrix, this ends up almost equal
-#             to N_exact (the exclusion/inclusion cancel out).
-#   N_exact:  the exact total trainable parameter count of the model (every
-#             parameter, including the tied embedding/head matrix once).
-#   N_eff:    "effective" parameters -- N_Porian adjusted upward to also
-#             account for attention-operation FLOPs, which raw parameter
-#             counts don't capture; bigger relative effect on smaller models.
-#   N_Kaplan: Kaplan et al.'s original convention -- excludes both the
-#             embedding layer and the head, so it drops the large tied
-#             embedding/unembedding matrix entirely. Massively undercounts
-#             small models (up to ~90% smaller here) since that matrix
-#             dominates their parameter count.
+# Porian et al. (arXiv:2406.19146), in the paper's own N_Porian/N_exact/N_eff/
+# N_Kaplan conventions -- see README.md's "N-variant vocabulary" section.
 PORIAN_PARAM_LOOKUP_M = {
     (3, 96): {"N_Porian": 5.173, "N_exact": 5.176, "N_eff": 5.763, "N_Kaplan": 0.331},
     (4, 128): {"N_Porian": 7.504, "N_exact": 7.508, "N_eff": 8.552, "N_Kaplan": 1.049},
@@ -63,9 +49,44 @@ def adapt_oellm_multilingual(df: pd.DataFrame) -> pd.DataFrame:
     return df[COLUMNS]
 
 
-def adapt_steplaw(df: pd.DataFrame) -> pd.DataFrame:
-    df = df.rename(columns={"bs": "gbsz"})
-    return df[COLUMNS]
+def adapt_steplaw_dense(df: pd.DataFrame) -> pd.DataFrame:
+    df = df.rename(columns={
+        "bs": "gbsz",
+        "h": "width",
+        "numl": "depth",
+        "ffnh": "ffn",
+        "numh": "num_heads",
+    })
+    df["seq_len"] = 2048
+    df["warmup_iters"] = 2000
+    df["lr_schedule"] = "cosine decay"
+    df["N_definition"] = "N_ne"
+    return df[
+        COLUMNS
+        + ["width", "depth", "ffn", "num_heads", "seq_len", "warmup_iters", "lr_schedule", "N_definition"]
+    ]
+
+
+def adapt_steplaw_moe(df: pd.DataFrame) -> pd.DataFrame:
+    df = df.rename(columns={
+        "bs": "gbsz",
+        "h": "width",
+        "numl": "depth",
+        "ffnh": "ffn",
+        "numh": "num_heads",
+        "nume": "num_experts",
+        "moeh": "expert_width",
+        "topk": "top_k",
+        "Na": "N_active",
+    })
+    df["warmup_iters"] = 2000
+    df["lr_schedule"] = "cosine decay"
+    df["N_definition"] = "N_ne"
+    return df[
+        COLUMNS
+        + ["width", "depth", "ffn", "num_heads", "seq_len", "warmup_iters", "lr_schedule"]
+        + ["num_experts", "expert_width", "top_k", "N_active", "N_definition"]
+    ]
 
 
 def adapt_porian(df: pd.DataFrame) -> pd.DataFrame:
@@ -230,13 +251,19 @@ def _gemstone_adapter(name: str):
     )
 
 
+STEPLAW_RAW_DIRS = {
+    "steplaw_dense_n1911": "steplaw_dense",
+    "steplaw_moe_n708": "steplaw_moe",
+}
+
 # name -> (adapter, raw filename(s), file format). filename(s) is a list for
 # sources fetched as multiple files (e.g. HuggingFace train/test splits) that
 # get concatenated before adapting.
 ADAPTERS = {
     "oellm_english": (adapt_oellm_english, "all_points_clean.csv", "csv"),
     "oellm_multilingual": (adapt_oellm_multilingual, "decay_points_clean.csv", "csv"),
-    "steplaw": (adapt_steplaw, "dense_lr_bs_loss.csv", "csv"),
+    "steplaw_dense_n1911": (adapt_steplaw_dense, "dense_lr_bs_loss.csv", "csv"),
+    "steplaw_moe_n708": (adapt_steplaw_moe, "moe_lr_bs_loss.csv", "csv"),
     "porian": (adapt_porian, "experiment_results.pickle.xz", "pickle"),
     **{
         name: (_gemstone_adapter(name), filename, "jsonl")
@@ -292,7 +319,12 @@ def main():
     for name in sources:
         adapt, filenames, filetype = ADAPTERS[name]
 
-        raw_dir = RAW_DIR / (GEMSTONE_RAW_DIR if name in GEMSTONE_VARIANTS else name)
+        if name in GEMSTONE_VARIANTS:
+            raw_dir = RAW_DIR / GEMSTONE_RAW_DIR
+        elif name in STEPLAW_RAW_DIRS:
+            raw_dir = RAW_DIR / STEPLAW_RAW_DIRS[name]
+        else:
+            raw_dir = RAW_DIR / name
         try:
             if isinstance(filenames, list):
                 df = pd.concat(

@@ -24,9 +24,13 @@ GIT_SOURCES = {
     },
     # Li et al., "Predictable Scale: Part I, Step Law -- Optimal Hyperparameter
     # Scaling Law in Large Language Model Pretraining", arXiv:2503.04715.
-    "steplaw": {
+    "steplaw_dense": {
         "repo": "https://github.com/step-law/steplaw.git",
         "path": "data/dense_lr_bs_loss.csv",
+    },
+    "steplaw_moe": {
+        "repo": "https://github.com/step-law/steplaw.git",
+        "path": "data/moe_lr_bs_loss.csv",
     },
 }
 
