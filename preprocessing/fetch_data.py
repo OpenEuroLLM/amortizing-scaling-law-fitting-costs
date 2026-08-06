@@ -51,7 +51,7 @@ SPLIT_URL_SOURCES = {
     # "Spend Less, Fit Better: Budget-Efficient Scaling Law Fitting via Active
     # Experiment Selection" (arXiv:2604.22753). Only the sub-datasets whose
     # columns map onto N/D/lr/gbsz/loss (or a subset of it) are included here
-    # -- see NOTES.md for the other sub-datasets and why they don't fit.
+    # -- other sub-datasets are excluded because their columns don't fit.
     "activesl_lr_bsz": {
         "base_url": "https://raw.githubusercontent.com/PlanarG/active-sl/main/benchmark/dataset/lr_bsz_scaling_law",
         "filenames": ["train-00000-of-00001.parquet", "test-00000-of-00001.parquet"],

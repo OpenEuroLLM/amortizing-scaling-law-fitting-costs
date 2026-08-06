@@ -43,8 +43,8 @@ def adapt_oellm_english(df: pd.DataFrame) -> pd.DataFrame:
 
 def adapt_oellm_multilingual(df: pd.DataFrame) -> pd.DataFrame:
     # N is ambiguous in this source (N_ne_*, N_total_*, N_Porian_*); using the
-    # Porian et al. convention -- see NOTES.md for the open question on
-    # verifying this choice (and D/lr/gbsz) against each source's intent.
+    # Porian et al. convention -- this choice (and D/lr/gbsz) has not been
+    # verified against the source's intent.
     df = df.rename(columns={"N_Porian_exact": "N"})
     return df[COLUMNS]
 
@@ -100,7 +100,7 @@ def adapt_porian(df: pd.DataFrame) -> pd.DataFrame:
         ]
     # N_Porian is the default "N" for now, so this is directly usable with
     # --input; N_exact/N_eff/N_Kaplan stay available as their own columns
-    # until the fitting scripts support choosing a variant (NOTES.md to-do).
+    # until the fitting scripts support choosing a variant.
     df["N"] = df["N_Porian"]
     return df[COLUMNS + ["N_Porian", "N_exact", "N_eff", "N_Kaplan"]]
 
@@ -284,7 +284,7 @@ ADAPTERS = {
         ["train-00000-of-00001.parquet", "test-00000-of-00001.parquet"],
         "parquet",
     ),
-    # No public source -- see NOTES.md; raw file must be placed manually at
+    # No public source; raw file must be placed manually at
     # data/raw/warmstart/warmstart_runs_flattened.parquet.
     "warmstart": (adapt_warmstart, "warmstart_runs_flattened.parquet", "parquet"),
 }
