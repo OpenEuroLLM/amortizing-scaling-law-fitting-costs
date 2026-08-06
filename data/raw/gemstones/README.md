@@ -88,7 +88,4 @@ Besides the common `N, D, loss`, `adapt_gemstones` fills in `lr`, `gbsz`, `width
   schedule. `0` for `predecay` rows (the branch point), `step - step / 1.1`
   for `decay` rows (after the branch); `None` for every other variant.
 - `tied_embeddings` = `False` for every Gemstones-native row (Appendix A).
-- `N_definition` = `"N_total"`, using this project's existing N-variant
-  vocabulary (see `porian`'s adapter/NOTES.md: `N_total` = every parameter,
-  `N_ne` = excludes both embedding matrices, `N_Porian` = excludes only the
-  input embedding).
+- `N_definition` = `"N_total"` (see README.md's "N-variant vocabulary" section).
