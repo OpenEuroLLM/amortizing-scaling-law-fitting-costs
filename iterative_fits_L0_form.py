@@ -1,4 +1,5 @@
 import argparse
+import warnings
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
@@ -7,13 +8,15 @@ from pathlib import Path
 from scaling.utils import fit_parametric_form, get_pareto_frontier
 
 from models import GPModel
-from selection import RandomSelection, LocalSearch
+from selection import RandomSelection, LocalSearch, MaxVarianceSelection, FarthestPointSelection
 from parametric_forms import PARAMETRIC_FORMS
 
 
 SELECTION = {
     "random": RandomSelection,
     "local_search": LocalSearch,
+    "max_variance": MaxVarianceSelection,
+    "farthest_point": FarthestPointSelection,
 }
 
 MODELS = {
@@ -157,6 +160,11 @@ def get_args():
         help="Factors on the max. seen compute to determine permissible range for sampling."
     )
     parser.add_argument('--model_type', type=str, default='gp', choices=['gp'])
+    parser.add_argument(
+        '--model_free', action='store_true',
+        help="Model-free mode: fit L(C) directly on the observed compute-optimal points, skipping "
+        "the GP surrogate grid-infill. Turns e.g. --selection random into a fully model-free baseline."
+    )
     parser.add_argument('--selection', type=str, default='random', choices=list(SELECTION))
     parser.add_argument('--input', type=str, required=True)
     parser.add_argument('--output_dir', type=str, required=True)
@@ -251,6 +259,12 @@ if __name__ == "__main__":
 
     # main loop here
     splitter = SELECTION[args.selection](seed=args.seed)
+    # model-free skips the surrogate entirely; a surrogate-based selector can't run without it.
+    if args.model_free and getattr(splitter, "needs_surrogate", False):
+        raise ValueError(
+            f"--model_free is incompatible with surrogate-based selection '{args.selection}' "
+            f"(it needs the GP to pick points). Use a surrogate-free selector, e.g. --selection random."
+        )
     rng = np.random.RandomState(args.seed)
 
     # initialization: seed with the cheapest point, then fill up to init_points under the envelope
@@ -275,7 +289,28 @@ if __name__ == "__main__":
 
         # sample a new point under the cost envelope; its C is this iteration's cost
         pool = next_batch_compute(train_df, acquired_idx, C_max=C_lim, C_window=args.C_window)
-        new_idx = splitter.next_point(train_df, pool.index)
+        # surrogate-guided selectors (e.g. max_variance) need a GP fit on the current
+        # observations *before* picking; fit it once and hand it to next_point.
+        # farthest_point / random ignore `surrogate` and use `acquired_idx` instead.
+        sel_surrogate = None
+        if getattr(splitter, "needs_surrogate", False) and len(acquired_idx) >= 2:
+            _obs = train_df.loc[acquired_idx]
+            try:
+                sel_surrogate = MODELS[args.model_type]()
+                sel_surrogate.fit(np.log(_obs[INPUT_X].to_numpy()), _obs[OUTPUT_Y].to_numpy()[:, None])
+            except Exception as e:
+                # GP fit can raise NotPSDError: the kernel matrix is ill-conditioned (no inverse --
+                # a kernel must be positive-definite), which happens with few / near-duplicate points.
+                # We fall back to a random pick for this one iteration; warn so that's not silent.
+                warnings.warn(
+                    f"[iter {iter_idx - args.init_points}] selection GP fit failed "
+                    f"({type(e).__name__}: {e}); using a RANDOM pick this iteration "
+                    f"instead of '{args.selection}'.",
+                    RuntimeWarning, stacklevel=2,
+                )
+                sel_surrogate = None
+        new_idx = splitter.next_point(train_df, pool.index,
+                                      acquired_idx=acquired_idx, surrogate=sel_surrogate)
         acquired_idx = acquired_idx.append(pd.Index([new_idx]))
         iter_compute = train_df.loc[new_idx, "C"]
 
@@ -285,25 +320,27 @@ if __name__ == "__main__":
         observations = train_df.loc[acquired_idx]
         remaining_idx = train_df.index.difference(acquired_idx)
 
-        # surrogate: fit on observations (log-features), predict the unacquired rest
-        pred_y, heldout_mse = build_surrogate(
-            np.log(observations[INPUT_X].to_numpy()),
-            observations[OUTPUT_Y].to_numpy()[:, None],
-            np.log(train_df.loc[remaining_idx, INPUT_X].to_numpy()),
-            test_y=train_df.loc[remaining_idx, OUTPUT_Y].to_numpy(),
-            model_type=args.model_type,
-            use_mean_model=True if args.gp_mean_as_l0 else False,
-            diagnose=args.diagnose_gp
-        )
-
-        # true loss where observed, predicted loss elsewhere
-        df_pred = train_df.copy()
-        df_pred.loc[remaining_idx, OUTPUT_Y] = pred_y
-
-        # parametric fit on the mixed data
-        best_params, best_loss = build_fit(
-            df_pred[INPUT_X + ["C", OUTPUT_Y]], form_name=args.form, fit_quality=args.fit_quality
-        )
+        if args.model_free:
+            # model-free: fit L(C) directly on the observed points, no surrogate infill
+            heldout_mse = float("nan")
+            best_params, best_loss = build_fit(
+                observations[INPUT_X + ["C", OUTPUT_Y]], form_name=args.form, fit_quality=args.fit_quality)
+        else:
+            # surrogate: fit a GP on observations (log-features), predict the unacquired rest
+            pred_y, heldout_mse = build_surrogate(
+                np.log(observations[INPUT_X].to_numpy()),
+                observations[OUTPUT_Y].to_numpy()[:, None],
+                np.log(train_df.loc[remaining_idx, INPUT_X].to_numpy()),
+                test_y=train_df.loc[remaining_idx, OUTPUT_Y].to_numpy(),
+                model_type=args.model_type,
+                use_mean_model=True if args.gp_mean_as_l0 else False,
+                diagnose=args.diagnose_gp
+            )
+            # true loss where observed, predicted loss elsewhere, then fit the mixed data
+            df_pred = train_df.copy()
+            df_pred.loc[remaining_idx, OUTPUT_Y] = pred_y
+            best_params, best_loss = build_fit(
+                df_pred[INPUT_X + ["C", OUTPUT_Y]], form_name=args.form, fit_quality=args.fit_quality)
         print(f"#Iteration {iter_idx}: Fitting loss={best_loss:2.2e}", end="; ")
         _print_fit_results(form, best_params)
         _params_so_far = best_params  # for next iteration's GP mean initialization if requested

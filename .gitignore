@@ -18,7 +18,9 @@ results/
 
 __pycache__/
 */__pycache__/
+*.pyc
 
 surrogate_venv
+.venv/
 
 CLAUDE.md
