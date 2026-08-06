@@ -2,15 +2,16 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 
+from pathlib import Path
+
 import seaborn as sns
-from scripts.utils import N_palette, D_palette, Ns, Ds, N_color_map, D_color_map, FORMAT_BILLIONS, N_ticks, D_ticks
+from plot_utils import N_palette, D_palette, Ns, Ds, N_color_map, D_color_map, FORMAT_BILLIONS, N_ticks, D_ticks
 from scipy.optimize import curve_fit
 
 
 loss_key = 'loss'
 
-df = pd.read_csv('../../data/preprocessed/all_points_clean.csv')
-#df = pd.read_csv('../../data/model_based/model_based_scaling_laws_subset_20_seed_1.csv')
+df = pd.read_csv('data/preprocessed/oellm_english.csv')
 df.head()
 
 # Any duplicate runs
@@ -24,6 +25,7 @@ df["C"] = 6 * df["N"] * df["D"]
 # Optimal (lr, gbsz) for each (N, D)
 df_best_lr_gbsz = df.loc[df.groupby(["N", "D"])[loss_key].idxmin()].reset_index(drop=True)
 df_best_lr_gbsz = df_best_lr_gbsz[df_best_lr_gbsz.N != 1.7e9]
+N_color_map = dict(zip(sorted(df_best_lr_gbsz["N"].unique()), N_palette))
 
 # Extract Pareto points of L vs C.
 df_env = df_best_lr_gbsz.sort_values(["C", loss_key])
@@ -144,5 +146,6 @@ ax.legend(
 )
 
 plt.tight_layout()
-plt.savefig('../../fig/model/fit_compute.png')
+Path('results').mkdir(exist_ok=True)
+plt.savefig('results/fit_compute.png')
 plt.show()

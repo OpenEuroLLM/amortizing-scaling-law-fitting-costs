@@ -60,9 +60,9 @@ class GPModel(SurrogateModel):
 
         with torch.no_grad():
             post = self._gp.posterior(torch.tensor(X_test))
-            mean = post.mean.numpy()
+            mean = post.mean.numpy().squeeze(-1)
             if return_std:
-                std = post.variance.clamp_min(1e-12).sqrt().numpy()
+                std = post.variance.clamp_min(1e-12).sqrt().numpy().squeeze(-1)
                 return mean, std
             return mean
 

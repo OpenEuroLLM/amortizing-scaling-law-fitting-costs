@@ -463,3 +463,11 @@ class SuccessiveHalvingGP:
         sub = pool[pool.N == best_size]
         sub = sub[sub.D == sub.D.min()]                  # advance its curve by one rung
         return int(sub["_pred"].idxmin())                # GP picks the config at that rung
+
+
+SELECTION = {
+    "random": RandomSelection,
+    "local_search": LocalSearch,
+    "max_variance": MaxVarianceSelection,
+    "farthest_point": FarthestPointSelection,
+}

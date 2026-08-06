@@ -28,7 +28,7 @@ df_fit = pd.DataFrame(df).reset_index(drop=True)
 # Generate training data
 n_points = args.num_points
 splitter = SELECTION[args.selection](seed=args.seed)
-X, y, total_compute = splitter.split(df_fit, n_points)
+X, y, total_compute, _ = splitter.split(df_fit, n_points)
 
 train_x = np.log(X)
 train_y = y[:, None]
@@ -77,4 +77,5 @@ results = {
     'mse': float(mse),
     'total_compute': total_compute,
 }
+Path(args.output_dir).mkdir(parents=True, exist_ok=True)
 json.dump(results, open(Path(args.output_dir) / f'results_{args.model_type}_{args.selection}_{n_points}_points_seed_{args.seed}.json', 'w'))

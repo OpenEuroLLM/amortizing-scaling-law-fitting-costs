@@ -5,10 +5,11 @@ import numpy as np
 import pandas as pd
 from pathlib import Path
 
-from scaling.utils import fit_parametric_form, functional_form_L0, get_pareto_frontier
+from scaling.utils import fit_parametric_form, get_pareto_frontier
 
 from models import GPModel
 from selection import RandomSelection, LocalSearch, MaxVarianceSelection, FarthestPointSelection
+from parametric_forms import PARAMETRIC_FORMS
 
 
 SELECTION = {
@@ -120,60 +121,28 @@ def build_surrogate(
 
 def build_fit(
     df: pd.DataFrame,
-    x_name: str = "C",
-    y_name: str = "loss",
+    form_name: str = "L0",
+    y_name: str | None = None,
     fit_quality: str = 'debug',
 ) -> tuple[np.ndarray, float]:
-    pareto_df = get_pareto_frontier(df, x_name=x_name, y_name=y_name)
+    form = PARAMETRIC_FORMS[form_name]
+    y_name = y_name if y_name is not None else form.target
+    fit_df = get_pareto_frontier(df, x_name=form.input_cols[0], y_name=y_name) if form.use_pareto else df
+    X_data = fit_df[form.input_cols].to_numpy()
+    if X_data.shape[1] == 1:
+        X_data = X_data.ravel()
     best_params, best_loss, _ = fit_parametric_form(
-        functional_form_L0,
-        pareto_df[x_name].to_numpy(),
-        np.log(pareto_df[y_name].to_numpy()),
-        *param_fit_setup_args(fit_quality)
+        form.func,
+        X_data,
+        np.log(fit_df[y_name].to_numpy()),
+        form.initial_grid(fit_quality),
+        form.bounds,
     )
     return best_params, best_loss
 
 
-def param_fit_setup_args(
-    fit_quality: str = 'debug',
-) -> tuple[list[list[float]], list[tuple[float, float]]]:
-    """Initial grid and bounds for parametric fit of L(C) = L0 + A * C^alpha.
-    """
-    if fit_quality == 'debug': # 3 x 3 x 3 = 27
-        initial_grid = [ 
-            [l0, a, b]
-            for l0 in np.log([0.5, 1.0, 2.0])     # L0 guesses
-            for a in [0., 5., 10.,]              # a = log(coefficient)
-            for b in [-0.05, -0.2, -0.5]          # exponent (negative!)
-        ]
-    elif fit_quality == 'dense':  # 6 x 6 x 6 = 216
-        initial_grid = [ 
-            [l0, a, b]
-            for l0 in np.linspace(np.log(0.1), np.log(3.0), 6)
-            for a in [0., 5., 10., 20., 30., 40.]
-            for b in [-0.02, -0.05, -0.1, -0.2, -0.5, -1.0]
-        ]
-    elif fit_quality == 'super_dense':   # 10 x 13 x 14 = 1820
-        initial_grid = [
-            [l0, a, b]
-            for l0 in np.linspace(np.log(0.05), np.log(3.5), 8)
-            for a in [0., 2.5, 5., 7.5, 10., 15., 20., 25., 35., 45.]
-            for b in [-0.01, -0.02, -0.05, -0.08, -0.12, -0.2, -0.35, -0.5, -0.75, -1.0]
-        ]
-    else:
-        raise ValueError(f"Unsupported fit quality: {fit_quality}")
-    bounds = [
-        (np.log(1e-3), np.log(4.0)),  # L0 bounds
-        (None, None),                 # A bounds
-        (-1.0, 0.0)                   # alpha bounds
-    ]
-    return initial_grid, bounds
-
-
-def _print_fit_results(params: np.ndarray):
-    assert len(params) == 3, "Expected 3 parameters: L0, A, alpha"
-    L0, A, alpha = params
-    print(f"L(C) = {np.exp(L0):.3f} + {np.exp(A):.3f} * C^({alpha:.4f})")
+def _print_fit_results(form, params: np.ndarray):
+    print(form.format_fit(params))
 
 
 def get_args():
@@ -199,6 +168,18 @@ def get_args():
     parser.add_argument('--selection', type=str, default='random', choices=list(SELECTION))
     parser.add_argument('--input', type=str, required=True)
     parser.add_argument('--output_dir', type=str, required=True)
+    parser.add_argument(
+        '--form', type=str, default='L0', choices=list(PARAMETRIC_FORMS),
+        help="Parametric functional form to fit. 'L0': L(C) = L0 + A*C^alpha. "
+        "'chinchilla3': L(N,D) = E + A/N^alpha + B/D^beta (Chinchilla Approach 3). "
+        "'chinchilla_interaction': chinchilla3 plus an N*D interaction term with its own "
+        "single exponent, L(N,D) = E + A/N^alpha + B/D^beta + G/(N*D)^gamma. "
+        "'width_depth': L(width,depth,D) = E + A/width^alpha + B/depth^beta + F/D^gamma. "
+        "'steplaw_lr'/'steplaw_bsz': Step Law (arXiv:2503.04715) optimal LR/batch-size "
+        "power laws -- build_fit() fits these against 'lr'/'gbsz' by default (form.target); "
+        "they have no L-vs-C marginalization, so don't drive them through this script's "
+        "C-extrapolation path."
+    )
     parser.add_argument(
         '--fit_quality', type=str, default='debug', choices=['debug', 'dense', 'super_dense']
     )
@@ -250,6 +231,8 @@ if __name__ == "__main__":
         df, held_out_type=args.held_out_type, held_out_C_lower=args.held_out_C_lower
     )
 
+    form = PARAMETRIC_FORMS[args.form]
+
     # ground truth prep
     _params_so_far = (0.7, 2.0, -0.05)
     _global_df = pd.concat((train_df, test_df_known))
@@ -264,9 +247,9 @@ if __name__ == "__main__":
     )
     print("Fitting parametric form on the global surrogate...")
     global_best_params, global_best_loss = build_fit(
-        _global_df, x_name="C", y_name="loss", fit_quality=args.fit_quality
+        _global_df, form_name=args.form, y_name="loss", fit_quality=args.fit_quality
     )
-    _print_fit_results(global_best_params)
+    _print_fit_results(form, global_best_params)
 
     # test targets for per-iteration fit evaluation
     _test_pareto = get_pareto_frontier(test_df_known, x_name="C", y_name="loss")
@@ -293,11 +276,8 @@ if __name__ == "__main__":
 
     # main loop
     history = []
-    incumbents = {
-        "l0": np.inf,
-        "A": np.inf,
-        "alpha": np.inf,
-    }
+    interp_names = list(form.interpretable(global_best_params).keys())
+    incumbents = {name: np.inf for name in interp_names}
     for iter_idx in range(args.init_points, n_iters + 1):
         # budget checks
         if args.total_C is not None and total_compute_spent >= args.total_C:
@@ -344,7 +324,7 @@ if __name__ == "__main__":
             # model-free: fit L(C) directly on the observed points, no surrogate infill
             heldout_mse = float("nan")
             best_params, best_loss = build_fit(
-                observations[INPUT_X + ["C", OUTPUT_Y]], fit_quality=args.fit_quality)
+                observations[INPUT_X + ["C", OUTPUT_Y]], form_name=args.form, fit_quality=args.fit_quality)
         else:
             # surrogate: fit a GP on observations (log-features), predict the unacquired rest
             pred_y, heldout_mse = build_surrogate(
@@ -359,10 +339,20 @@ if __name__ == "__main__":
             # true loss where observed, predicted loss elsewhere, then fit the mixed data
             df_pred = train_df.copy()
             df_pred.loc[remaining_idx, OUTPUT_Y] = pred_y
-            best_params, best_loss = build_fit(df_pred[INPUT_X + ["C", OUTPUT_Y]], fit_quality=args.fit_quality)
+            best_params, best_loss = build_fit(
+                df_pred[INPUT_X + ["C", OUTPUT_Y]], form_name=args.form, fit_quality=args.fit_quality)
         print(f"#Iteration {iter_idx}: Fitting loss={best_loss:2.2e}", end="; ")
-        _print_fit_results(best_params)
+        _print_fit_results(form, best_params)
         _params_so_far = best_params  # for next iteration's GP mean initialization if requested
+
+        # regrets in interpretable space; irreducible-loss-like terms (form.signed_params) keep sign
+        interp = form.interpretable(best_params)
+        global_interp = form.interpretable(global_best_params)
+        regrets = {
+            name: (interp[name] - global_interp[name]) if name in form.signed_params
+            else abs(interp[name] - global_interp[name])
+            for name in interp_names
+        }
 
         history.append({
             "iter": iter_idx,
@@ -373,29 +363,28 @@ if __name__ == "__main__":
             "heldout_mse": float(heldout_mse),
             "heldout_size": len(remaining_idx),
             "known_test_mse": float(np.mean(
-                (functional_form_L0(C_known, best_params, return_log_loss=False) - L_known) ** 2
+                (form.to_L_vs_C(C_known, best_params) - L_known) ** 2
             )),
-            "L_known": list(functional_form_L0(C_known, best_params, return_log_loss=False)),
+            "L_known": list(form.to_L_vs_C(C_known, best_params)),
             "C_unknown": list(C_unknown),
-            "L_unknown": list(functional_form_L0(C_unknown, best_params, return_log_loss=False)),
+            "L_unknown": list(form.to_L_vs_C(C_unknown, best_params)),
             "params": list(best_params),
             "fit_loss": float(best_loss),
-            # regrets in interpretable space: L0 = exp(l0), A = exp(a); alpha = b directly
-            "regret_L0": float(np.exp(best_params[0]) - np.exp(global_best_params[0])),  # signed
-            "regret_A": float(np.abs(np.exp(best_params[1]) - np.exp(global_best_params[1]))),
-            "regret_alpha": float(np.abs(best_params[2] - global_best_params[2])),
+            **{f"regret_{name}": float(regrets[name]) for name in interp_names},
         })
         # updating incumbent tracker
-        # l0 regret is signed: incumbent is the value closest to zero, sign preserved
-        incumbents["l0"] = min(incumbents["l0"], history[-1]["regret_L0"], key=abs)
-        incumbents["A"] = min(incumbents["A"], history[-1]["regret_A"])
-        incumbents["alpha"] = min(incumbents["alpha"], history[-1]["regret_alpha"])
+        # signed params: incumbent is the value closest to zero, sign preserved; others: plain min
+        for name in interp_names:
+            if name in form.signed_params:
+                incumbents[name] = min(incumbents[name], history[-1][f"regret_{name}"], key=abs)
+            else:
+                incumbents[name] = min(incumbents[name], history[-1][f"regret_{name}"])
 
         # # update C_lim envelope for sampling: ceiling stays one growth step above the max cost seen
         C_lim = observations.C.max()
     print(f"{'-'*30}")
     print("Global surrogate fit results:")
-    _print_fit_results(global_best_params)
+    _print_fit_results(form, global_best_params)
     print(f"Known Test MSE: {history[-1]['known_test_mse']:.2e}")
     print(f"Unknown Test Predictions:")
     for i in range(len(C_unknown)):
@@ -404,7 +393,10 @@ if __name__ == "__main__":
     print("Run done!")
 
     print(f"{'='*30}\nIncumbent regrets:")
-    print(f"L0: {incumbents['l0']:.3f} (signed)\nA: {incumbents['A']:.3f}\nalpha: {incumbents['alpha']:.4f}\n{'='*30}")
+    for name in interp_names:
+        tag = " (signed)" if name in form.signed_params else ""
+        print(f"{name}{tag}: {incumbents[name]:.4f}")
+    print(f"{'='*30}")
 
     # saving to disk
     output_dir = Path(args.output_dir) / f"seed_{args.seed}"
@@ -416,33 +408,59 @@ if __name__ == "__main__":
 
     if args.plot_figure:
 
-        fig, axes = plt.subplots(2, 3, figsize=(16, 9))
+        # panels: one regret plot per interpretable param of `form`, plus known-test mse,
+        # compute/iter, and the fit-comparison plot. Laid out dynamically since the param
+        # count (and hence panel count) varies by form.
+        n_extra_panels = 3  # known-test mse, compute/iter, fit-comparison
+        total_panels = len(interp_names) + n_extra_panels
+        ncols = 3
+        nrows = int(np.ceil(total_panels / ncols))
 
-        # row 1: regrets; row 2 (first two): known-test mse, cumulative compute
-        panels = [
-            (axes[0, 0], "regret_L0", "regret L0 (signed)", None),
-            (axes[0, 1], "regret_A", "regret A", "log"),
-            (axes[0, 2], "regret_alpha", "regret alpha", "log"),
-            (axes[1, 0], "known_test_mse", "known-test MSE", "log"),
-            (axes[1, 1], "iter_compute", "compute / iter", "log"),
-        ]
-        for ax, col, title, yscale in panels:
-            if "regret" in title:
-                ax.plot(history_df["iter"], np.minimum.accumulate(history_df[col]))
+        fig, axes = plt.subplots(nrows, ncols, figsize=(16, 4.5 * nrows))
+        flat_axes = np.atleast_2d(axes).flatten()
+
+        panel_idx = 0
+        for name in interp_names:
+            ax = flat_axes[panel_idx]
+            col = f"regret_{name}"
+            if name in form.signed_params:
+                # running incumbent closest to zero, sign preserved (matches printed incumbents)
+                vals = history_df[col].to_numpy()
+                signed_running = []
+                best = vals[0]
+                for v in vals:
+                    if abs(v) < abs(best):
+                        best = v
+                    signed_running.append(best)
+                ax.plot(history_df["iter"], signed_running)
+                ax.axhline(0, color="gray", lw=0.5)
+                ax.set_title(f"incumbent regret {name} (signed)")
             else:
-                ax.plot(history_df["iter"], history_df[col])
+                ax.plot(history_df["iter"], np.minimum.accumulate(history_df[col]))
+                ax.set_yscale("log")
+                ax.set_title(f"incumbent regret {name}")
+            ax.set_xlabel("iteration")
+            panel_idx += 1
+
+        for col, title, yscale in [
+            ("known_test_mse", "known-test MSE", "log"),
+            ("iter_compute", "compute / iter", "log"),
+        ]:
+            ax = flat_axes[panel_idx]
+            ax.plot(history_df["iter"], history_df[col])
             if yscale:
                 ax.set_yscale(yscale)
             ax.set_xlabel("iteration")
-            ax.set_title(title) if "regret" not in title else ax.set_title(f"incumbent {title}")
-        axes[0, 0].axhline(0, color="gray", lw=0.5)
+            ax.set_title(title)
+            panel_idx += 1
 
-        # row 2, third column: real vs fantasized parametric fits
-        ax = axes[1, 2]
+        # fit-comparison panel: real vs fantasized parametric fits, plotted as L vs C
+        ax = flat_axes[panel_idx]
+        panel_idx += 1
 
         # "real": fit only on actually observed points (init + acquired)
         obs_df = train_df.loc[acquired_idx]
-        real_params, _ = build_fit(obs_df[INPUT_X + ["C", OUTPUT_Y]], fit_quality=args.fit_quality)
+        real_params, _ = build_fit(obs_df[INPUT_X + ["C", OUTPUT_Y]], form_name=args.form, fit_quality=args.fit_quality)
         # "fantasized": last fit from history (true observed + GP-predicted rest)
         fant_params = history_df.iloc[-1]["params"]
 
@@ -454,10 +472,10 @@ if __name__ == "__main__":
         C_grid = np.geomspace(obs_df["C"].min(), C_unknown.max(), 200)
         seen = C_grid <= obs_df["C"].max()
         for params, color, label in [(real_params, "tab:green", "subsampled grid"), (fant_params, "red", "fantasized dense grid")]:
-            L_hat = functional_form_L0(C_grid, np.asarray(params), return_log_loss=False)
+            L_hat = form.to_L_vs_C(C_grid, np.asarray(params))
             ax.plot(C_grid[seen], L_hat[seen], color=color, ls="-", label=label)
             ax.plot(C_grid[~seen], L_hat[~seen], color=color, ls="--")
-        L_global_hat = functional_form_L0(C_grid, np.asarray(global_best_params), return_log_loss=False)
+        L_global_hat = form.to_L_vs_C(C_grid, np.asarray(global_best_params))
         ax.plot(C_grid[seen], L_global_hat[seen], color="tab:purple", ls="-.", label="all data fit")
         ax.plot(C_grid[~seen], L_global_hat[~seen], color="tab:purple", ls="--")
         ax.set_xscale("log")
@@ -465,6 +483,10 @@ if __name__ == "__main__":
         ax.set_ylabel("loss")
         ax.legend(fontsize=15)
         ax.set_title("real vs fantasized fit (dashed = beyond seen C)")
+
+        # hide any unused trailing axes
+        for ax in flat_axes[panel_idx:]:
+            ax.axis("off")
 
         fig.tight_layout()
         fig.savefig(output_dir / f"{args.filename}.png", dpi=150)
