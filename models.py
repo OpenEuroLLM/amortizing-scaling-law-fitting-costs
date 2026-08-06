@@ -55,11 +55,16 @@ class GPModel(SurrogateModel):
         self._gp.eval()
 
 
-    def predict(self, X_test: np.ndarray) -> np.ndarray:
+    def predict(self, X_test: np.ndarray, return_std: bool = False):
         import torch
 
         with torch.no_grad():
-            return self._gp.posterior(torch.tensor(X_test)).mean.numpy()
+            post = self._gp.posterior(torch.tensor(X_test))
+            mean = post.mean.numpy()
+            if return_std:
+                std = post.variance.clamp_min(1e-12).sqrt().numpy()
+                return mean, std
+            return mean
 
 
 class TabPFNModel(SurrogateModel):
