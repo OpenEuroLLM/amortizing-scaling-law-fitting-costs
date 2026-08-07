@@ -7,7 +7,7 @@ from pathlib import Path
 
 from scaling.utils import fit_parametric_form, get_pareto_frontier
 
-from models import GPModel
+from models import GPModel, MEAN_FORM_NAMES
 from selection import RandomSelection, LocalSearch, MaxVarianceSelection, FarthestPointSelection
 from parametric_forms import PARAMETRIC_FORMS
 
@@ -196,14 +196,15 @@ def get_args():
         "--held_out_type is 'C'. Default is 0.5."
     )
     parser.add_argument(
-        '--gp_mean_as_l0', action='store_true',
-        help="If set, the GP mean is the parametric L0 form (fitted during MLL). " \
-        "If not set, the GP mean is a constant function (default)."
+        '--gp_mean_form', type=str, default=None, choices=list(MEAN_FORM_NAMES),
+        help="Parametric form used as the GP mean, fitted during MLL optimization "
+        "(keys mirror --form; only forms with a torch implementation are available). "
+        "If unset, the GP mean is a constant function (default)."
     )
     parser.add_argument(
         '--gp_mean_warmstart', action='store_true',
         help="Initialize the GP mean with the best parametric fit seen so far "
-        "(lowest in-data fit loss). Only relevant when --gp_mean_as_l0 is set."
+        "(lowest in-data fit loss). Only relevant when --gp_mean_form is set."
     )
     parser.add_argument(
         '--diagnose_gp', action='store_true',
@@ -248,7 +249,7 @@ if __name__ == "__main__":
         _global_df[OUTPUT_Y].to_numpy()[:, None],
         np.log(test_df_known[INPUT_X].to_numpy()),
         model_type=args.model_type,
-        mean_form="l0" if args.gp_mean_as_l0 else None,
+        mean_form=args.gp_mean_form,
         diagnose=args.diagnose_gp,
     )
     print("Fitting parametric form on the global surrogate...")
@@ -326,32 +327,6 @@ if __name__ == "__main__":
         observations = train_df.loc[acquired_idx]
         remaining_idx = train_df.index.difference(acquired_idx)
 
-        # surrogate: fit on observations (log-features), predict the unacquired rest
-        pred_y, heldout_mse = build_surrogate(
-            np.log(observations[INPUT_X].to_numpy()),
-            observations[OUTPUT_Y].to_numpy()[:, None],
-            np.log(train_df.loc[remaining_idx, INPUT_X].to_numpy()),
-            test_y=train_df.loc[remaining_idx, OUTPUT_Y].to_numpy(),
-            model_type=args.model_type,
-            mean_form="l0" if args.gp_mean_as_l0 else None,
-            mean_kwargs=(
-                {"init_params": _best_fit_params}
-                if args.gp_mean_warmstart and _best_fit_params is not None else {}
-            ),
-            diagnose=args.diagnose_gp
-        )
-
-        # true loss where observed, predicted loss elsewhere
-        df_pred = train_df.copy()
-        df_pred.loc[remaining_idx, OUTPUT_Y] = pred_y
-
-        # parametric fit on the mixed data
-        best_params, best_loss = build_fit(df_pred[INPUT_X + ["C", OUTPUT_Y]], fit_quality=args.fit_quality)
-        if best_loss < _best_fit_loss:  # incumbent by in-data fit loss
-            _best_fit_loss, _best_fit_params = best_loss, best_params
-        print(f"#Iteration {iter_idx}: Fitting loss={best_loss:2.2e}", end="; ")
-        _print_fit_results(form, best_params)
-
         if args.model_free:
             # model-free: fit L(C) directly on the observed points, no surrogate infill
             heldout_mse = float("nan")
@@ -365,7 +340,11 @@ if __name__ == "__main__":
                 np.log(train_df.loc[remaining_idx, INPUT_X].to_numpy()),
                 test_y=train_df.loc[remaining_idx, OUTPUT_Y].to_numpy(),
                 model_type=args.model_type,
-                use_mean_model=True if args.gp_mean_as_l0 else False,
+                mean_form=args.gp_mean_form,
+                mean_kwargs=(
+                    {"init_params": _best_fit_params}
+                    if args.gp_mean_warmstart and _best_fit_params is not None else {}
+                ),
                 diagnose=args.diagnose_gp
             )
             # true loss where observed, predicted loss elsewhere, then fit the mixed data
@@ -373,9 +352,10 @@ if __name__ == "__main__":
             df_pred.loc[remaining_idx, OUTPUT_Y] = pred_y
             best_params, best_loss = build_fit(
                 df_pred[INPUT_X + ["C", OUTPUT_Y]], form_name=args.form, fit_quality=args.fit_quality)
+        if best_loss < _best_fit_loss:  # incumbent by in-data fit loss, for GP mean warm-start
+            _best_fit_loss, _best_fit_params = best_loss, best_params
         print(f"#Iteration {iter_idx}: Fitting loss={best_loss:2.2e}", end="; ")
         _print_fit_results(form, best_params)
-        _params_so_far = best_params  # for next iteration's GP mean initialization if requested
 
         # regrets in interpretable space; irreducible-loss-like terms (form.signed_params) keep sign
         interp = form.interpretable(best_params)

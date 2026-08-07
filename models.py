@@ -4,6 +4,12 @@ import numpy as np
 from typing import List
 
 
+# Names of the parametric GP means available in `mean_functions.MEAN_FORMS`, kept here
+# so callers can offer the choice without importing torch/gpytorch. Keys mirror
+# `parametric_forms.PARAMETRIC_FORMS`; validated against the real registry in fit().
+MEAN_FORM_NAMES: tuple[str, ...] = ("L0", "chinchilla3")
+
+
 class SurrogateModel(ABC):
     @abstractmethod
     def fit(self, train_x: np.ndarray, train_y: np.ndarray) -> None:
@@ -29,20 +35,20 @@ class GPModel(SurrogateModel):
     def fit(self, train_x: np.ndarray, train_y: np.ndarray, max_attempts: int = 10, **kwargs) -> None:
         # lazy import to avoid requiring gpytorch/botorch unless GPModel is used
         import botorch, gpytorch, torch
-        from mean_functions import (
-            ScalingLawMean_L0_form as MeanL0,
-            ScalingLawMean_chin3_form as MeanChin3,
-        )
-        _mean_map = {
-            "l0": MeanL0,
-            "chin3": MeanChin3,
-            None: None,
-        }
+        from mean_functions import MEAN_FORMS
+
+        if self.mean_form is not None and self.mean_form not in MEAN_FORMS:
+            raise ValueError(
+                f"Unsupported mean_form: {self.mean_form}. Choose from {list(MEAN_FORMS)} or None."
+            )
 
         self._gp = botorch.models.SingleTaskGP(
             torch.tensor(train_x),
             torch.tensor(train_y),
-            mean_module=_mean_map[self.mean_form](**self._mean_kwargs) if self.mean_form is not None else None,
+            mean_module=(
+                MEAN_FORMS[self.mean_form](**self._mean_kwargs)
+                if self.mean_form is not None else None
+            ),
             outcome_transform=None,
             covar_module=gpytorch.kernels.MaternKernel(ard_num_dims=train_x.shape[1]),
         )

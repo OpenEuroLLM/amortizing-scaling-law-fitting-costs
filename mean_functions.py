@@ -62,8 +62,8 @@ class ScalingLawMean_L0_form(_ConstrainedMean):
     ):
         super().__init__()  # log L0, log A, b
         if bounds is None and use_bounds:
-            from iterative_fits_L0_form import param_fit_setup_args
-            _, bounds = param_fit_setup_args()
+            from parametric_forms import PARAMETRIC_FORMS
+            bounds = PARAMETRIC_FORMS["L0"].bounds
         bounds = bounds or [None] * len(self.PARAM_NAMES)
         # registering to ensure they are optimized during MLL training
         for name, value, bound in zip(self.PARAM_NAMES, init_params, bounds):
@@ -97,8 +97,8 @@ class ScalingLawMean_chin3_form(_ConstrainedMean):
     ):
         super().__init__()  # log A, alpha, log B, beta, log E
         if bounds is None and use_bounds:
-            from iterative_fits_approach3 import param_fit_setup_args
-            _, bounds = param_fit_setup_args()
+            from parametric_forms import PARAMETRIC_FORMS
+            bounds = PARAMETRIC_FORMS["chinchilla3"].bounds
         bounds = bounds or [None] * len(self.PARAM_NAMES)
         # registering to ensure they are optimized during MLL training
         for name, value, bound in zip(self.PARAM_NAMES, init_params, bounds):
@@ -114,4 +114,12 @@ class ScalingLawMean_chin3_form(_ConstrainedMean):
             + torch.exp(self._value("b") - self._value("beta") * logD)
             + self._value("e").exp()
         )
+
+
+# Keys mirror `parametric_forms.PARAMETRIC_FORMS` so --form and --gp_mean_form share a
+# vocabulary. Forms without a torch mean implementation simply have no entry here.
+MEAN_FORMS: dict[str, type] = {
+    "L0": ScalingLawMean_L0_form,
+    "chinchilla3": ScalingLawMean_chin3_form,
+}
 # end of file
