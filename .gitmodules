@@ -1,3 +1,6 @@
 [submodule "EffingScaling"]
-	path = EffingScaling
+	path = submodules/EffingScaling
 	url = https://github.com/Neeratyoy/EffingScaling.git
+[submodule "active-sl"]
+	path = submodules/active-sl
+	url = https://github.com/PlanarG/active-sl.git
