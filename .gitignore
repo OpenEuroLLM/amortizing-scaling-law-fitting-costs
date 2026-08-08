@@ -19,6 +19,7 @@ results/
 __pycache__/
 */__pycache__/
 *.pyc
+*.egg-info/
 
 surrogate_venv
 .venv/

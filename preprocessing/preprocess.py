@@ -1,5 +1,5 @@
 """Transform each raw source file into the common N, D, lr, gbsz, loss schema that
-iterative_fits_L0_form.py and model_based_fits.py expect as --input.
+main.py and extra/one_shot_fit.py expect as --input.
 """
 import argparse
 import math
