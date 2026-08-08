@@ -26,7 +26,7 @@ from scipy.optimize import curve_fit
 REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO))                              # for `selection`, `models`
 sys.path.insert(0, str(Path(__file__).resolve().parent))  # for sibling modules
-from selection import FEATURES, SuccessiveHalvingGP
+from core.selection import FEATURES, SuccessiveHalvingGP
 
 OUT = REPO / "results" / "baselines" / "successive_halving"
 
