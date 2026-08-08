@@ -1,19 +1,8 @@
-from abc import ABC, abstractmethod
-
 import numpy as np
-from typing import List
+
+from .base import SurrogateModel
 
 
-class SurrogateModel(ABC):
-    @abstractmethod
-    def fit(self, train_x: np.ndarray, train_y: np.ndarray) -> None:
-        """train_x and train_y are already log-transformed."""
-
-    @abstractmethod
-    def predict(self, X_test: np.ndarray) -> np.ndarray:
-        """X_test is already log-transformed. Returns 1-D predictions."""
-
-    
 class GPModel(SurrogateModel):
     def __init__(self, **kwargs):
         self._gp = None
@@ -28,7 +17,7 @@ class GPModel(SurrogateModel):
     def fit(self, train_x: np.ndarray, train_y: np.ndarray, max_attempts: int = 10, **kwargs) -> None:
         # lazy import to avoid requiring gpytorch/botorch unless GPModel is used
         import botorch, gpytorch, torch
-        from mean_functions import ScalingLawMean_L0_form as MeanL0
+        from .means import ScalingLawMean_L0_form as MeanL0
 
         self._gp = botorch.models.SingleTaskGP(
             torch.tensor(train_x),
@@ -54,7 +43,6 @@ class GPModel(SurrogateModel):
 
         self._gp.eval()
 
-
     def predict(self, X_test: np.ndarray, return_std: bool = False):
         import torch
 
@@ -65,38 +53,3 @@ class GPModel(SurrogateModel):
                 std = post.variance.clamp_min(1e-12).sqrt().numpy().squeeze(-1)
                 return mean, std
             return mean
-
-
-class TabPFNModel(SurrogateModel):
-    def fit(self, train_x: np.ndarray, train_y: np.ndarray, **kwargs) -> None:
-        from tabpfn import TabPFNRegressor
-
-        self._reg = TabPFNRegressor()
-        self._reg.fit(train_x, train_y)
-
-    def predict(self, X_test: np.ndarray) -> np.ndarray:
-        return self._reg.predict(X_test)
-
-
-class AutoGluonModel(SurrogateModel):
-    def fit(self, train_x: np.ndarray, train_y: np.ndarray, **kwargs) -> None:
-        import pandas as pd
-        from autogluon.tabular import TabularPredictor
-
-        train_data = pd.DataFrame(train_x, columns=[f"f{i}" for i in range(train_x.shape[1])])
-        train_data["labels"] = train_y.ravel()
-        self._predictor = TabularPredictor(label="labels").fit(train_data)
-        self._feature_names = train_data.columns.drop("labels").tolist()
-
-    def predict(self, X_test: np.ndarray) -> np.ndarray:
-        import pandas as pd
-
-        X_df = pd.DataFrame(X_test, columns=self._feature_names)
-        return self._predictor.predict(X_df).to_numpy()
-
-
-MODELS = {
-    "gp": GPModel,
-    "tabpfn": TabPFNModel,
-    "ag": AutoGluonModel,
-}

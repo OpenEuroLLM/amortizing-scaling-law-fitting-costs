@@ -1,13 +1,18 @@
 from typing import List
-import numpy as np
+
 import torch
 import gpytorch
 
 
 class ScalingLawMean_L0_form(gpytorch.means.Mean):
+    """GP mean fixed to the L0 scaling law ``L(C) = L0 + A * C^b`` (log-space params).
+
+    Used as the ``mean_module`` of ``GPModel`` when ``use_mean_model`` is set, so the
+    surrogate's prior mean already follows the scaling law instead of a constant.
+    """
 
     def __init__(
-        self, 
+        self,
         init_params: List[float] = (0.2, 3.5, -0.5),
         col_N: int = 0,
         col_D: int = 1,
@@ -24,4 +29,3 @@ class ScalingLawMean_L0_form(gpytorch.means.Mean):
     def forward(self, x):
         logC = torch.log(torch.tensor(6.0, dtype=torch.float64)) + x[..., self.col_N] + x[..., self.col_D]        # cols 0,1 = log N, log D
         return self.l0.exp() + torch.exp(self.a + self.b * logC)
-# end of file
