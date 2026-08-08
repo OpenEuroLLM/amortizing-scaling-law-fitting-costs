@@ -38,8 +38,10 @@ class TestPipelinesSmoke(unittest.TestCase):
             self.assertTrue(hist_path.exists(), f"{task} wrote no history parquet")
             hist = pd.read_parquet(hist_path)
             self.assertGreater(len(hist), 0)
-            # every acquisition row carries the held-out score and the fitted params
-            self.assertIn("known_test_mse", hist.columns)
+            # every acquisition row carries the two-region eval scores + the fitted params
+            self.assertIn("law_mse_pool", hist.columns)
+            self.assertIn("law_mse_held_out", hist.columns)
+            self.assertIn("known_test_mse", hist.columns)  # back-compat alias of held-out
             self.assertIn("params", hist.columns)
             return hist
 

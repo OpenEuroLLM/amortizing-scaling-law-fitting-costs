@@ -106,19 +106,23 @@ Recovers a **loss** scaling law (`L` vs compute / `N,D`) via the acquisition loo
 
 ```bash
 python main.py loss_law \
-    --input      path/to/all_points_clean.csv \
-    --output_dir results/ \
-    --niters     50 \          # acquisition iterations (or use --total_C for a compute budget)
-    --seed       1 \
-    --model_type gp \          # none | gp | tabpfn | ag  ('none' = model-free)
-    --selection  random \      # random | local_search | max_variance | farthest_point
-    --form       L0 \          # L0 | chinchilla3 | chinchilla_interaction | width_depth
-    --feature_set default      # default | arch | data | full  (which features the GP sees)
+    --input        path/to/all_points_clean.csv \
+    --output_dir   results/ \
+    --niters       50 \          # acquisition iterations (or use --C_budget for a compute budget)
+    --seed         1 \
+    --model_type   gp \          # none | gp | tabpfn | ag  ('none' = model-free)
+    --selection    random \      # random | local_search | max_variance | farthest_point
+    --form         L0 \          # L0 | chinchilla3 | chinchilla_interaction | width_depth
+    --feature_set  default \     # default | arch | data | full  (which features the GP sees)
+    --split_axis   C \           # C | N  (axis the fraction split runs along)
+    --held_out_frac 0.2          # top fraction by --split_axis held out (extrapolation eval)
 ```
 
-Each iteration selects a new point, (optionally) infills the rest of the grid with the surrogate, fits the chosen parametric `--form`, and logs the fit, per-parameter regret, and held-out MSE. The run writes `output_dir/seed_{seed}/history.parquet` (add `--plot_figure` for a diagnostic PNG). Use `--model_type none` (model-free) to fit directly on the observed points and skip the surrogate infill.
+Each iteration selects a new point, (optionally) infills the rest of the grid with the surrogate, fits the chosen parametric `--form`, and logs the fit, per-parameter regret, and the fitted law's MSE on **both regions**. The run writes `output_dir/seed_{seed}/history.parquet` (add `--plot_figure` for a diagnostic PNG). Use `--model_type none` (model-free) to fit directly on the observed points and skip the surrogate infill.
 
-`--form` here covers the **loss** forms. L-vs-C forms (`L0`, `chinchilla3`, `chinchilla_interaction`) are scored against the held-out compute frontier and extrapolated beyond it; `width_depth` has no compute axis, so it's scored by **direct held-out loss MSE** (pair it with a `--feature_set` that exposes `width`/`depth`). The optimal-HP forms (`steplaw_lr`, `steplaw_bsz`) are a different task — see `hp_law` below.
+**Two-region evaluation.** The grid is split along `--split_axis` into the acquire-able **pool** (everything below the threshold — the loop draws from it) and the top-fraction **held-out** region (`--held_out_frac` — the largest scales, never acquired). Every iteration scores the recovered law on both, written as `law_mse_pool` (in-region recovery on the searched scales) and `law_mse_held_out` (extrapolation; `known_test_mse` is kept as a back-compat alias of the latter). Their gap is the in-region→held-out generalization gap — the diagnostic/comparison figures plot the two as a solid (pool) + dashed (held-out) pair.
+
+`--form` here covers the **loss** forms. L-vs-C forms (`L0`, `chinchilla3`, `chinchilla_interaction`) are scored on each region's compute-optimal frontier and extrapolated beyond the grid; `width_depth` has no compute axis, so it's scored by **direct loss MSE** at the config points (pair it with a `--feature_set` that exposes `width`/`depth`). The optimal-HP forms (`steplaw_lr`, `steplaw_bsz`) are a different task — see `hp_law` below.
 
 **GP feature set (`--feature_set`).** The GP always predicts `loss`; this flag chooses which columns it conditions on, to test whether richer features improve loss-infill and law recovery:
 
@@ -137,13 +141,14 @@ The step-law forms fit the **optimal hyperparameter** as a function of scale, no
 
 ```bash
 python main.py hp_law \
-    --input      path/to/steplaw.csv \
-    --output_dir results/ \
-    --form       steplaw_lr \   # steplaw_lr (optimal lr vs N,D) | steplaw_bsz (optimal batch size vs D)
+    --input        path/to/steplaw.csv \
+    --output_dir   results/ \
+    --form         steplaw_lr \   # steplaw_lr (optimal lr vs N,D) | steplaw_bsz (optimal batch size vs D)
+    --held_out_frac 0.2 \         # largest fraction of scales held out (extrapolation eval)
     --plot_figure
 ```
 
-It reduces the grid to the optimal HP **per scale** (min-loss row at each `N,D` / `D`), fits the step law to those optima, and scores the predicted-vs-actual optimum at the held-out largest scale (log-MSE). Writes `output_dir/seed_{seed}/hp_fit.parquet`. This is the direct (model-free) first cut; a surrogate-infilled/iterative variant mirroring `loss_law` is the natural extension.
+It reduces the grid to the optimal HP **per scale** (min-loss row at each `N,D` / `D`) and fits the step law to those optima. It uses the same **two-region** split as `loss_law`, but along the form's scale axis: the largest `--held_out_frac` of scales are held out (extrapolation) and the rest are the acquire-able pool (needs ≥3 scales to fit). Each iteration logs the predicted-vs-actual optimal-HP log-MSE on both — `law_mse_pool` (in-region) and `law_mse_held_out`. Writes `output_dir/seed_{seed}/history.parquet`.
 
 ### One-shot surrogate fit (alternative baseline)
 

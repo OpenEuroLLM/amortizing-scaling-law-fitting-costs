@@ -152,22 +152,27 @@ def run_experiments(experiments, grid, seeds, *, out_dir, task="loss_law",
     return results
 
 
-def ground_truth(grid_df, form, held_out_type="N"):
-    """Full-grid references for the recovered-law panel: fit + frontier points + a compute grid."""
+def ground_truth(grid_df, form, held_out_frac=0.2, axis="C"):
+    """Full-grid references for the recovered-law panel: fit + the two regions' frontiers + a grid.
+
+    Uses the same ``split_search_space`` split the pipeline runs, so the panel's pool / held-out
+    markers match what the runs scored (defaults mirror the pipeline defaults).
+    """
     from scaling.utils import get_pareto_frontier
-    from core.utils.data import data_preprocess
+    from core.utils.data import split_search_space
     from core.fitting import build_fit
 
     df = grid_df.copy()
     df["C"] = 6.0 * df["N"] * df["D"]                       # float N,D -> no int64 overflow
-    train_df, test_known, _ = data_preprocess(df, held_out_type=held_out_type)
-    gt_params = build_fit(pd.concat([train_df, test_known]), form_name=form.name, y_name="loss")[0]
+    pool_df, held_out_df = split_search_space(df, held_out_frac, axis)
+    gt_params = build_fit(df, form_name=form.name, y_name="loss")[0]
     return {
         "params": gt_params,
-        "train_df": train_df,
-        "test_known": test_known,
-        "front_obs": get_pareto_frontier(train_df, x_name="C", y_name="loss"),
-        "front_held": get_pareto_frontier(test_known, x_name="C", y_name="loss"),
+        "train_df": pool_df,
+        "test_known": held_out_df,
+        "front_obs": get_pareto_frontier(pool_df, x_name="C", y_name="loss"),
+        "front_held": get_pareto_frontier(held_out_df, x_name="C", y_name="loss"),
+        "C_split": float(held_out_df["C"].min()),
         "Cgrid": np.geomspace(df["C"].min(), df["C"].max(), 200),
     }
 
@@ -197,23 +202,27 @@ def _median_final_params(hists):
 
 
 def _loss_panel0(ax, experiments, hists_by_label, form, refs):
+    C_split = refs["C_split"]
+    ax.axvspan(C_split, refs["test_known"]["C"].max(), color="#fca5a5", alpha=0.12, lw=0,
+               label="held-out region")
     ax.scatter(refs["train_df"]["C"], refs["train_df"]["loss"], s=6, color="#d1d5db", alpha=0.5,
                zorder=1, label="all configs (per N,D scale)")
-    ax.scatter(refs["test_known"]["C"], refs["test_known"]["loss"], s=10, color="#fca5a5", alpha=0.5, zorder=2)
     ax.scatter(refs["front_obs"]["C"], refs["front_obs"]["loss"], s=16, color="#111827", zorder=3,
                label="compute-optimal (pool)")
     ax.scatter(refs["front_held"]["C"], refs["front_held"]["loss"], s=70, marker="X", color="#dc2626",
-               zorder=5, edgecolor="white", linewidth=0.6, label="held-out frontier (largest N)")
+               zorder=5, edgecolor="white", linewidth=0.6, label="held-out eval frontier")
     Cgrid = refs["Cgrid"]
+    seen = Cgrid <= C_split                                    # pool | held-out boundary
     ax.plot(Cgrid, form.to_L_vs_C(Cgrid, refs["params"]), "--", color="#111827", lw=2.0, zorder=4,
             label="full-grid fit")
     for label, spec in experiments.items():
-        ax.plot(Cgrid, form.to_L_vs_C(Cgrid, _median_final_params(hists_by_label[label])),
-                color=spec["color"], lw=1.8, label=label)
+        y = form.to_L_vs_C(Cgrid, _median_final_params(hists_by_label[label]))
+        ax.plot(Cgrid[seen], y[seen], color=spec["color"], lw=1.8, label=label)      # train region
+        ax.plot(Cgrid[~seen], y[~seen], color=spec["color"], lw=1.8, ls="--")        # held-out region
     ax.set_xscale("log"); ax.set_yscale("log")
     _tidy_log_axis(ax, "x"); _tidy_log_axis(ax, "y")
     ax.set_xlabel("compute C (FLOPs)"); ax.set_ylabel("loss L")
-    ax.set_title("recovered law + held-out points"); ax.legend(fontsize=8)
+    ax.set_title("recovered law + eval regions"); ax.legend(fontsize=7)
 
 
 def _hp_panel0(ax, experiments, hists_by_label, form, refs):
@@ -241,12 +250,36 @@ def _hp_panel0(ax, experiments, hists_by_label, form, refs):
 
 # --- the canonical comparison figure ---
 
+def _two_set_panel(ax, experiments, hists_by_label, ylab):
+    """Fitted-law recovery MSE on both regions: pool (solid) vs held-out (dashed), median+IQR.
+
+    Falls back to a single ``known_test_mse`` line for histories predating the two-set split.
+    """
+    cols = next(iter(hists_by_label.values()))[0].columns
+    series = ([("law_mse_pool", "-", "o", "pool"), ("law_mse_held_out", "--", "s", "held-out")]
+              if "law_mse_pool" in cols else [("known_test_mse", "-", "o", "held-out")])
+    for label, spec in experiments.items():
+        hists = hists_by_label[label]
+        for key, ls, mk, tag in series:
+            ys = [h[key].to_numpy() for h in hists]
+            if all(np.isnan(y).all() for y in ys):       # e.g. no in-region set on a tiny grid
+                continue
+            x, med, q1, q3 = _band_series([h["total_compute_spent"] for h in hists], ys)
+            ax.fill_between(x, q1, q3, color=spec["color"], alpha=0.12, lw=0)
+            ax.plot(x, med, ls, marker=mk, ms=3, color=spec["color"], label=f"{label} ({tag})")
+    ax.set_xscale("log"); ax.set_yscale("log")
+    _tidy_log_axis(ax, "x"); _tidy_log_axis(ax, "y")
+    ax.set_xlabel("compute spent (FLOPs)"); ax.set_ylabel(ylab)
+    ax.set_title("law recovery: in-region vs held-out"); ax.legend(fontsize=7)
+
+
 def comparison_figure(experiments, hists_by_label, form, refs, *, title, out_path, error_param=None,
                       domain="loss"):
     """Render the form-generic comparison figure to a high-DPI PNG.
 
-    Panels: a domain-specific first panel (``domain="loss"`` -> recovered law + held-out points via
-    the compute frontier; ``domain="hp"`` -> recovered optimal HP vs scale), then held-out MSE, an
+    Panels: a domain-specific first panel (``domain="loss"`` -> recovered law + the eval regions via
+    the compute frontier; ``domain="hp"`` -> recovered optimal HP vs scale), then the two-set law
+    recovery MSE (in-region solid vs held-out dashed), the cumulative compute spent vs iteration, an
     optional ``|regret_<error_param>|`` headline panel, then one recovered-coefficient trajectory per
     interpretable parameter -- each a median line + IQR band per experiment, vs. the full-grid truth.
     """
@@ -256,7 +289,7 @@ def comparison_figure(experiments, hists_by_label, form, refs, *, title, out_pat
     # skip the headline-error panel if this form doesn't log that regret column
     if error_param and f"regret_{error_param}" not in next(iter(hists_by_label.values()))[0].columns:
         error_param = None
-    n_fixed = 2 + (1 if error_param else 0)
+    n_fixed = 3 + (1 if error_param else 0)   # panel0 + two-set recovery + compute-spent (+ error)
     ncols = 3
     nrows = ceil((n_fixed + len(interp_names)) / ncols)
     fig, axes = plt.subplots(nrows, ncols, figsize=(5.3 * ncols, 4.5 * nrows))
@@ -284,10 +317,24 @@ def comparison_figure(experiments, hists_by_label, form, refs, *, title, out_pat
         ax.set_xlabel("compute spent (FLOPs)"); ax.set_ylabel(ylab)
         ax.set_title(title_); ax.legend(fontsize=8)
 
+    # two-set recovery panel: in-region (interpolation, solid) vs held-out (extrapolation, dashed)
     idx = 1
-    mse_ylab = "held-out log-MSE" if domain == "hp" else "known-test MSE"
-    traj(flat[idx], lambda h: h["known_test_mse"].to_numpy(), "held-out recovery", mse_ylab)
+    mse_ylab = "optimal-HP log-MSE" if domain == "hp" else "loss MSE"
+    _two_set_panel(flat[idx], experiments, hists_by_label, mse_ylab)
     idx += 1
+
+    # cumulative compute spent vs iteration: how fast each method burns the acquisition budget
+    ax = flat[idx]; idx += 1
+    for label, spec in experiments.items():
+        hists = hists_by_label[label]
+        x, med, q1, q3 = _band_series([h["iter"].to_numpy() for h in hists],
+                                      [h["total_compute_spent"].to_numpy() for h in hists])
+        ax.fill_between(x, q1, q3, color=spec["color"], alpha=0.15, lw=0)
+        ax.plot(x, med, "-o", color=spec["color"], ms=3, label=label)
+    ax.set_yscale("log"); _tidy_log_axis(ax, "y")
+    ax.set_xlabel("iteration"); ax.set_ylabel("total compute spent (FLOPs)")
+    ax.set_title("compute spent"); ax.legend(fontsize=8)
+
     if error_param:
         traj(flat[idx], lambda h: np.abs(h[f"regret_{error_param}"].to_numpy()),
              f"{error_param} error", f"|{error_param} regret|")

@@ -11,8 +11,10 @@ The surrogate infill is what makes this more than a lookup: at scales where only
 were observed, the GP-predicted loss fills the rest so the per-scale optimum can be estimated.
 ``--model_type none`` recovers the direct, model-free variant (fit on observed optima only).
 
-Held-out score: the predicted-vs-actual optimal HP at the largest held-out scale (log-MSE). The
-largest scale (largest N for lr, largest D for bsz) is held out and never acquired.
+Two-set score (mirroring loss_law): the scale axis is split by a fraction into the acquire-able pool
+(interior scales) and the largest scales (held out -> extrapolation). Each iteration logs the
+predicted-vs-actual optimal-HP log-MSE on both -- the pool (`law_mse_pool`, in-region recovery) and
+the held-out scales (`law_mse_held_out`). The held-out scales are never acquired.
 
 Dispatched from ``main.py`` (``python main.py hp_law ...``).
 """
@@ -43,44 +45,63 @@ def add_args(parser):
         help="Optimal-HP form. 'steplaw_lr': optimal LR vs (N,D). 'steplaw_bsz': optimal batch "
         "size vs D. (Loss forms live under the 'loss_law' task.)"
     )
+    parser.add_argument(
+        '--held_out_frac', type=float, default=0.2,
+        help="Fraction of the largest scales (on the form's scale axis) held out for the "
+        "extrapolation eval set. The remaining scales are the acquire-able pool, on which the "
+        "in-region (interpolation) recovery is scored. Default 0.2 (>=1 held-out scale, >=3 pool)."
+    )
 
 
 def run(args):
-    # --- data + held-out split (by the form's scale axis) ---
+    # --- data + scale-fraction split (pool / in-region eval / held-out scales) ---
     df, gp_features = _common.prepare_data(args)
     form = PARAMETRIC_FORMS[args.form]
     target = form.target                    # 'lr' or 'gbsz'
     scale_cols = form.input_cols            # [N, D] for lr; [D] for bsz
-    scale_col = scale_cols[0]               # the axis whose largest value is held out
+    scale_col = scale_cols[0]               # the axis split into train / held-out
 
     df = df.dropna(subset=list(dict.fromkeys(scale_cols + [target, "loss"])))
     df["C"] = 6.0 * df["N"] * df["D"]       # compute, for the acquisition envelope
 
-    # hold out the largest scale; the loop acquires only from the rest
-    hi = df[scale_col].max()
-    train_df = df[df[scale_col] < hi]
-    test_df = df[df[scale_col] == hi]
-    if test_df.empty or train_df[scale_col].nunique() < 3:
+    # held out = the largest `held_out_frac` of distinct scales (extrapolation); the rest are the
+    # acquire-able pool, on which the in-region recovery is scored (needs >=3 to fit).
+    scales = np.sort(df[scale_col].unique())
+    n_held = max(1, int(round(args.held_out_frac * len(scales))))
+    held_scales, pool_scales = scales[-n_held:], scales[:-n_held]
+
+    train_df = df[df[scale_col].isin(pool_scales)]
+    held_out_df = df[df[scale_col].isin(held_scales)]
+    if len(pool_scales) < 3 or held_out_df.empty:
         raise ValueError(
-            f"Need >= 3 train scales and a non-empty held-out set on '{scale_col}'; "
-            f"got {train_df[scale_col].nunique()} train scales, {len(test_df)} held-out rows."
+            f"Need >= 3 pool scales and a non-empty held-out set on '{scale_col}'; got "
+            f"{len(pool_scales)} pool / {len(held_scales)} held-out."
         )
+    print(f"Split (scale={scale_col}): pool scales={len(pool_scales)} / "
+          f"held-out scales={len(held_scales)}")
 
     def _form_X(frame):
         # single-input forms (steplaw_bsz: D) want a 1-D array, matching build_fit's ravel
         X = frame[scale_cols].to_numpy(dtype=float)
         return X.ravel() if X.shape[1] == 1 else X
 
-    # --- ground truth + held-out target + per-iteration callbacks ---
+    # --- ground truth + eval targets + per-iteration callbacks ---
     # fit the step law on ALL data reduced to optima
-    global_opt = _reduce_to_optima(pd.concat([train_df, test_df]), scale_cols)
+    global_opt = _reduce_to_optima(df, scale_cols)
     global_best_params, _ = build_fit(global_opt, form_name=args.form, y_name=target, fit_quality=args.fit_quality)
     print("Global optimal-HP fit (all data):")
     print_fit_results(form, global_best_params)
 
-    # held-out optimal HP at the largest scale (reduce the held-out rows to their per-scale optima)
-    test_opt = _reduce_to_optima(test_df, scale_cols)
-    hp_true = test_opt[target].to_numpy(dtype=float)
+    # per-scale optimal HP on each region: the pool (in-region) and the held-out largest scales
+    test_opt = _reduce_to_optima(held_out_df, scale_cols)
+    pool_opt = _reduce_to_optima(train_df, scale_cols)
+
+    def _hp_logmse(frame_opt, params):
+        if frame_opt is None or len(frame_opt) == 0:
+            return float("nan")
+        hp_pred = np.asarray(form.func(_form_X(frame_opt), params, return_log_loss=False), dtype=float)
+        hp_true_ = frame_opt[target].to_numpy(dtype=float)
+        return float(np.mean((np.log(hp_pred) - np.log(hp_true_)) ** 2))
 
     def fit_grid(df_pred):
         # read the optimal HP per scale off the (observed + infilled) grid, then fit the step law
@@ -88,8 +109,12 @@ def run(args):
                          y_name=target, fit_quality=args.fit_quality)
 
     def heldout_metric(params):
-        hp_pred = np.asarray(form.func(_form_X(test_opt), params, return_log_loss=False), dtype=float)
-        return {"known_test_mse": float(np.mean((np.log(hp_pred) - np.log(hp_true)) ** 2))}
+        m_held = _hp_logmse(test_opt, params)
+        return {
+            "law_mse_pool": _hp_logmse(pool_opt, params),
+            "law_mse_held_out": m_held,
+            "known_test_mse": m_held,          # back-compat alias (held-out score)
+        }
 
     # --- acquisition loop ---
     history, incumbents, interp_names, df_pred, acquired_idx = _common.run_acquisition(
@@ -100,7 +125,8 @@ def run(args):
     print(f"{'-'*30}")
     print("Global optimal-HP fit (all data):")
     print_fit_results(form, global_best_params)
-    print(f"Held-out ({scale_col}={hi:g}) optimal-{target} log-MSE: {history[-1]['known_test_mse']:.3e}")
+    print(f"Pool (in-region) optimal-{target} log-MSE: {history[-1]['law_mse_pool']:.3e}  |  "
+          f"Held-out optimal-{target} log-MSE: {history[-1]['law_mse_held_out']:.3e}")
     print(f"{'-'*30}")
     print("Run done!")
 
@@ -111,32 +137,34 @@ def run(args):
     print(f"Saved history to {output_dir / f'{args.filename}.parquet'}")
 
     if args.plot_figure:
-        _plot(args, form, history_df, interp_names, df_pred, test_opt, hp_true,
+        _plot(args, form, history_df, interp_names, df_pred, test_opt,
               scale_cols, scale_col, target, global_best_params, output_dir)
 
 
-def _plot(args, form, history_df, interp_names, df_pred, test_opt, hp_true,
+def _plot(args, form, history_df, interp_names, df_pred, test_opt,
           scale_cols, scale_col, target, global_best_params, output_dir):
     set_pub_style()
-    n_extra = 2  # known-test log-MSE, optimal-HP-vs-scale
+    n_extra = 2  # two-set log-MSE, optimal-HP-vs-scale
     total_panels = len(interp_names) + n_extra
     ncols = 3
     nrows = int(np.ceil(total_panels / ncols))
     fig, axes = plt.subplots(nrows, ncols, figsize=(16, 4.5 * nrows))
     flat_axes = np.atleast_2d(axes).flatten()
 
-    # per-param regret panels, then the held-out convergence panel
+    # per-param regret panels, then the two-set recovery panel
     panel_idx = _common.plot_regret_panels(flat_axes, 0, history_df, form, interp_names)
     ax = flat_axes[panel_idx]; panel_idx += 1
-    ax.plot(history_df["iter"], history_df["known_test_mse"])
-    ax.set_yscale("log"); ax.set_xlabel("iteration"); ax.set_title(f"held-out optimal-{target} log-MSE")
+    ax.plot(history_df["iter"], history_df["law_mse_pool"], "-o", ms=3, color="#0072B2", label="pool (in-region)")
+    ax.plot(history_df["iter"], history_df["law_mse_held_out"], "--s", ms=3, color="#D55E00", label="held-out")
+    ax.set_yscale("log"); ax.set_xlabel("iteration")
+    ax.set_title(f"optimal-{target} log-MSE"); ax.legend(fontsize=9)
 
     # optimal HP vs the primary scale axis: final-iteration optima, fitted curve, held-out point
     ax = flat_axes[panel_idx]; panel_idx += 1
     final_opt = _reduce_to_optima(df_pred, scale_cols)
     final_params = np.asarray(history_df.iloc[-1]["params"], dtype=float)
     ax.scatter(final_opt[scale_col], final_opt[target], s=16, color="#111827", label="optimal (acquired+infilled)")
-    ax.scatter(test_opt[scale_col], hp_true, s=90, marker="X", color="#dc2626",
+    ax.scatter(test_opt[scale_col], test_opt[target], s=90, marker="X", color="#dc2626",
                edgecolor="white", linewidth=0.6, zorder=5, label=f"held-out ({scale_col} max)")
     grid = np.geomspace(final_opt[scale_col].min(), test_opt[scale_col].max(), 100)
     X = grid if len(scale_cols) == 1 else np.column_stack(

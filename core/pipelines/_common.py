@@ -14,6 +14,8 @@ import warnings
 import numpy as np
 import pandas as pd
 
+from scaling.utils import get_pareto_frontier
+
 from core import GRID_TARGET, MAX_ITERS
 from core.selection import SELECTION
 from core.surrogates import MODELS, build_surrogate
@@ -21,11 +23,30 @@ from core.fitting import build_fit, print_fit_results  # noqa: F401  (re-exporte
 from core.utils.data import next_batch_compute, resolve_grid_features, FEATURE_SETS
 
 
+def score_law_frontier(df_set, form, params, supports_C):
+    """MSE of the fitted law's predicted loss vs. actual on one eval set.
+
+    L-vs-C forms are scored on the set's compute-optimal frontier (predicted ``L(C)`` vs. the
+    frontier loss); forms with no compute axis (width_depth) are scored directly at the set's config
+    points. Returns ``nan`` for an empty set (e.g. a grid too small to carve an in-region eval set).
+    """
+    if df_set is None or len(df_set) == 0:
+        return float("nan")
+    if supports_C:
+        front = get_pareto_frontier(df_set, x_name="C", y_name="loss")
+        L_hat = form.to_L_vs_C(front["C"].to_numpy(dtype=float), params)
+        L_true = front["loss"].to_numpy(dtype=float)
+    else:
+        L_hat = np.asarray(form.func(df_set[form.input_cols].to_numpy(), params, return_log_loss=False))
+        L_true = df_set["loss"].to_numpy(dtype=float)
+    return float(np.mean((L_hat - L_true) ** 2))
+
+
 def add_acquisition_args(parser):
     """CLI flags shared by every acquisition-loop task. Tasks add their own ``--form``."""
     parser.add_argument('--seed', type=int, required=True)
     parser.add_argument('--niters', type=int, default=None)
-    parser.add_argument('--total_C', type=float, default=None)
+    parser.add_argument('--C_budget', type=float, default=None)
     parser.add_argument('--init_points', type=int, default=25)
     parser.add_argument(
         '--init_compute_factor', type=float, default=10.0,
@@ -89,10 +110,10 @@ def run_acquisition(args, form, gp_features, train_df, global_best_params, fit_g
     per-iteration history fields (task-specific). Returns ``(history, incumbents, interp_names,
     df_pred, acquired_idx)`` -- the last two for the caller's plotting.
     """
-    if args.niters is None and args.total_C is None:
-        raise ValueError("Either --niters or --total_C must be specified.")
-    if args.niters is not None and args.total_C is not None:
-        raise ValueError("Only one of --niters or --total_C can be specified.")
+    if args.niters is None and args.C_budget is None:
+        raise ValueError("Either --niters or --C_budget must be specified.")
+    if args.niters is not None and args.C_budget is not None:
+        raise ValueError("Only one of --niters or --C_budget can be specified.")
     n_iters = args.init_points + (args.niters or (MAX_ITERS - args.init_points))
 
     splitter = SELECTION[args.selection](seed=args.seed)
@@ -116,8 +137,8 @@ def run_acquisition(args, form, gp_features, train_df, global_best_params, fit_g
     incumbents = {name: np.inf for name in interp_names}
     for iter_idx in range(args.init_points, n_iters + 1):
         # budget checks
-        if args.total_C is not None and total_compute_spent >= args.total_C:
-            print(f"\n\n{'=' * 50}\nReached total compute budget of {args.total_C}. Stopping iterations.\n{'=' * 50}\n")
+        if args.C_budget is not None and total_compute_spent >= args.C_budget:
+            print(f"\n\n{'=' * 50}\nReached total compute budget of {args.C_budget}. Stopping iterations.\n{'=' * 50}\n")
             break
         if len(acquired_idx) == len(train_df):
             print(f"\n\n{'=' * 50}\nAll {len(train_df)} points acquired. Stopping iterations.\n{'=' * 50}\n")

@@ -16,6 +16,7 @@ uv run --extra dev pytest                 # or pytest, once the `dev` extra is i
 |---|---|
 | `test_registries.py` | `PARAMETRIC_FORMS` / `MODELS` / `SELECTION` populate; loss-vs-HP form partition; `NullSurrogate` predicts NaN |
 | `test_feature_sets.py` | `resolve_grid_features` drops absent/all-null/constant columns; `arch`/`data`/`full` supersets |
+| `test_split.py` | `split_search_space` carves pool + held-out (disjoint, covering); held-out = largest compute |
 | `test_fitting.py` | `build_fit` returns finite, in-bounds params for `L0` and `steplaw_lr` |
-| `test_pipelines.py` | `main.py loss_law` / `hp_law` run to a valid `history.parquet` |
+| `test_pipelines.py` | `main.py loss_law` / `hp_law` run to a `history.parquet` with both two-set eval scores |
 | `_grid.py` | shared tiny synthetic `N x D x lr x gbsz` fixture grid |

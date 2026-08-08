@@ -2,12 +2,18 @@
 
 Surrogate-based acquisition loop (see ``_common.run_acquisition``): each iteration selects a config,
 (optionally) infills the unobserved grid's loss with a surrogate, fits a *loss* form, and logs
-per-parameter regret and held-out MSE. Handles every form whose target is ``loss``:
+per-parameter regret plus the fitted law's MSE on two eval sets.
 
-- L-vs-C forms (L0, chinchilla3, chinchilla_interaction): held-out loss is scored via the form's
-  compute marginalization (`to_L_vs_C`), and the run extrapolates loss beyond the observed compute.
-- forms with no compute axis (width_depth): held-out loss is scored *directly* -- predict loss at
-  the held-out config points via `form.func` -- and the C-extrapolation panels are skipped.
+The grid is split (``split_search_space``) by a fraction along ``--split_axis`` into two parts: the
+acquire-able **pool** (everything below the threshold -- the loop draws from it) and the top-fraction
+**held-out** region (extrapolation, never acquired). Each iteration scores the fitted law on both ->
+``law_mse_pool`` (in-region recovery) and ``law_mse_held_out`` (extrapolation); their gap is the
+in-region->held-out generalization gap. Handles every form whose target is ``loss``:
+
+- L-vs-C forms (L0, chinchilla3, chinchilla_interaction): each region is scored on its compute-optimal
+  frontier via `to_L_vs_C`, and the run extrapolates loss beyond the observed compute.
+- forms with no compute axis (width_depth): loss is scored *directly* at the config points via
+  `form.func`, and the C-extrapolation panels are skipped.
 
 Dispatched from ``main.py`` (``python main.py loss_law ...``).
 """
@@ -23,7 +29,7 @@ from core import GRID_TARGET
 from core.surrogates import build_surrogate
 from core.forms import PARAMETRIC_FORMS
 from core.fitting import build_fit, print_fit_results
-from core.utils.data import data_preprocess
+from core.utils.data import split_search_space
 from core.utils.plotting import set_pub_style
 from core.pipelines import _common
 
@@ -51,33 +57,37 @@ def add_args(parser):
         "width/depth). Optimal-HP forms (steplaw_lr/bsz) live under the 'hp_law' task."
     )
     parser.add_argument(
-        '--held_out_type', type=str, default='N', choices=['N', 'C'],
-        help="Whether to hold out the largest N or the largest C for testing. Default is 'N'."
+        '--split_axis', type=str, default='C', choices=['C', 'N'],
+        help="Axis the fraction split runs along. 'C': compute (6ND). 'N': model size. The top "
+        "fraction by this axis is the held-out (extrapolation) region. Default 'C'."
     )
     parser.add_argument(
-        '--held_out_C_lower', type=float, default=0.5,
-        help="held_out_C_lower*C_min defines the threshold for the held-out set when "
-        "--held_out_type is 'C'. Default is 0.5."
+        '--held_out_frac', type=float, default=0.2,
+        help="Fraction of the grid held out along --split_axis (largest scales) for the "
+        "extrapolation eval set. Everything below the threshold is the acquire-able pool, on which "
+        "the in-region (interpolation) recovery is scored. Default 0.2."
     )
 
 
 def run(args):
-    # --- data + held-out split ---
+    # --- data + two-way fraction split (acquire-able pool / held-out) ---
     df, gp_features = _common.prepare_data(args)
-    train_df, test_df_known, test_df_unknown = data_preprocess(
-        df, held_out_type=args.held_out_type, held_out_C_lower=args.held_out_C_lower
+    pool_df, held_out_df = split_search_space(
+        df, held_out_frac=args.held_out_frac, axis=args.split_axis
     )
+    train_df = pool_df                        # the loop acquires only from the pool
+    print(f"Split (axis={args.split_axis}): pool={len(pool_df)} / held-out={len(held_out_df)}")
 
     form = PARAMETRIC_FORMS[args.form]
     supports_C = _supports_compute_axis(form)  # False for width_depth (no compute marginalization)
 
-    # --- ground truth: global surrogate baseline + global parametric fit ---
-    _global_df = pd.concat((train_df, test_df_known))
+    # --- ground truth: global surrogate baseline + global parametric fit (all data) ---
+    _global_df = pd.concat((pool_df, held_out_df))
     print("\nBuilding global surrogate on all data as a baseline...")
     build_surrogate(
         np.log(_global_df[gp_features].to_numpy()),
         _global_df[GRID_TARGET].to_numpy()[:, None],
-        np.log(test_df_known[gp_features].to_numpy()),
+        np.log(held_out_df[gp_features].to_numpy()),
         model_type=args.model_type,
         use_mean_model=True if args.gp_mean_as_l0 else False,
         diagnose=args.diagnose_gp,
@@ -88,40 +98,38 @@ def run(args):
     )
     print_fit_results(form, global_best_params)
 
-    # --- held-out scoring setup + per-iteration callbacks ---
-    # L-vs-C forms score against the held-out compute-optimal frontier + extrapolate beyond it;
-    # width_depth scores loss directly at the held-out config points (no compute axis).
+    # --- scoring setup + per-iteration callbacks ---
+    # Score the fitted law on both regions: the acquire-able pool (in-region recovery) and the
+    # held-out region (extrapolation). L-vs-C forms score on each region's compute-optimal frontier;
+    # width_depth scores loss directly at the config points. The held-out frontier + a synthetic
+    # beyond-grid extension also drive the fit-comparison plot panel.
     if supports_C:
-        _test_pareto = get_pareto_frontier(test_df_known, x_name="C", y_name="loss")
-        C_known = _test_pareto["C"].to_numpy()
-        L_known = _test_pareto["loss"].to_numpy()
-        C_unknown = test_df_unknown["C"].to_numpy().astype(float)
+        _held_pareto = get_pareto_frontier(held_out_df, x_name="C", y_name="loss")
+        C_known = _held_pareto["C"].to_numpy()
+        L_known = _held_pareto["loss"].to_numpy()
+        C_unknown = C_known.max() * 10.0 ** np.arange(1, 6)   # extrapolation curve beyond the grid
     else:
         C_known = C_unknown = np.array([])
-        L_known = test_df_known["loss"].to_numpy()
-        X_known = test_df_known[form.input_cols].to_numpy()
 
     def fit_grid(df_pred):
         # build_fit reduces to the Pareto frontier internally when form.use_pareto
         return build_fit(df_pred, form_name=args.form, fit_quality=args.fit_quality)
 
     def heldout_metric(params):
-        if supports_C:
-            Lk = form.to_L_vs_C(C_known, params)
-            Lu = form.to_L_vs_C(C_unknown, params)
-            return {
-                "known_test_mse": float(np.mean((Lk - L_known) ** 2)),
-                "L_known": list(Lk),
-                "C_unknown": list(C_unknown),
-                "L_unknown": list(Lu),
-            }
-        Lk = np.asarray(form.func(X_known, params, return_log_loss=False))
-        return {
-            "known_test_mse": float(np.mean((Lk - L_known) ** 2)),
-            "L_known": list(Lk),
-            "C_unknown": [],
-            "L_unknown": [],
+        mse_pool = _common.score_law_frontier(pool_df, form, params, supports_C)
+        mse_held = _common.score_law_frontier(held_out_df, form, params, supports_C)
+        out = {
+            "law_mse_pool": mse_pool,
+            "law_mse_held_out": mse_held,
+            "known_test_mse": mse_held,          # back-compat alias (held-out score)
         }
+        if supports_C:
+            out.update(L_known=list(form.to_L_vs_C(C_known, params)),
+                       C_unknown=list(C_unknown),
+                       L_unknown=list(form.to_L_vs_C(C_unknown, params)))
+        else:
+            out.update(L_known=[], C_unknown=[], L_unknown=[])
+        return out
 
     # --- acquisition loop ---
     history, incumbents, interp_names, df_pred, acquired_idx = _common.run_acquisition(
@@ -132,9 +140,10 @@ def run(args):
     print(f"{'-'*30}")
     print("Global surrogate fit results:")
     print_fit_results(form, global_best_params)
-    print(f"Known Test MSE: {history[-1]['known_test_mse']:.2e}")
+    print(f"Pool (in-region) MSE: {history[-1]['law_mse_pool']:.2e}  |  "
+          f"Held-out eval MSE: {history[-1]['law_mse_held_out']:.2e}")
     if supports_C:
-        print("Unknown Test Predictions:")
+        print("Extrapolation beyond the grid:")
         for i in range(len(C_unknown)):
             print(f"    C={C_unknown[i]:.2e} -> L={history[-1]['L_unknown'][i]:.3f}")
     print(f"{'-'*30}")
@@ -148,15 +157,15 @@ def run(args):
 
     if args.plot_figure:
         _plot(args, form, supports_C, history_df, interp_names, train_df, acquired_idx,
-              df_pred, C_known, L_known, C_unknown, global_best_params, output_dir)
+              held_out_df, C_known, L_known, C_unknown, global_best_params, output_dir)
 
 
 def _plot(args, form, supports_C, history_df, interp_names, train_df, acquired_idx,
-          df_pred, C_known, L_known, C_unknown, global_best_params, output_dir):
-    # panels: one regret plot per interpretable param, plus known-test mse, compute/iter, and
-    # (for L-vs-C forms) the fit-comparison plot. Laid out dynamically.
+          held_out_df, C_known, L_known, C_unknown, global_best_params, output_dir):
+    # panels: one regret plot per interpretable param, plus the two-set recovery curve, compute/iter,
+    # and (for L-vs-C forms) the region-shaded fit-comparison plot. Laid out dynamically.
     set_pub_style()
-    n_extra_panels = 3  # known-test mse, compute/iter, fit-comparison (last skipped w/o compute axis)
+    n_extra_panels = 3  # two-set MSE, compute/iter, fit-comparison (last skipped w/o compute axis)
     total_panels = len(interp_names) + n_extra_panels
     ncols = 3
     nrows = int(np.ceil(total_panels / ncols))
@@ -164,33 +173,40 @@ def _plot(args, form, supports_C, history_df, interp_names, train_df, acquired_i
     fig, axes = plt.subplots(nrows, ncols, figsize=(16, 4.5 * nrows))
     flat_axes = np.atleast_2d(axes).flatten()
 
-    # per-param regret panels, then the two trajectory panels
+    # per-param regret panels, then the two-set recovery panel + compute/iter
     panel_idx = _common.plot_regret_panels(flat_axes, 0, history_df, form, interp_names)
-    for col, title, yscale in [
-        ("known_test_mse", "known-test MSE", "log"),
-        ("iter_compute", "compute / iter", "log"),
-    ]:
-        ax = flat_axes[panel_idx]
-        ax.plot(history_df["iter"], history_df[col])
-        if yscale:
-            ax.set_yscale(yscale)
-        ax.set_xlabel("iteration")
-        ax.set_title(title)
-        panel_idx += 1
 
-    # fit-comparison panel: real vs fantasized parametric fits as L vs C (only for L-vs-C forms)
+    # two-set recovery: pool (in-region, solid) vs held-out (extrapolation, dashed)
+    ax = flat_axes[panel_idx]; panel_idx += 1
+    ax.plot(history_df["iter"], history_df["law_mse_pool"], "-o", ms=3, color="#0072B2", label="pool (in-region)")
+    ax.plot(history_df["iter"], history_df["law_mse_held_out"], "--s", ms=3, color="#D55E00", label="held-out")
+    ax.set_yscale("log"); ax.set_xlabel("iteration"); ax.set_title("law recovery MSE"); ax.legend(fontsize=9)
+
+    ax = flat_axes[panel_idx]; panel_idx += 1
+    ax.plot(history_df["iter"], history_df["iter_compute"])
+    ax.set_yscale("log"); ax.set_xlabel("iteration"); ax.set_title("compute / iter")
+
+    # fit-comparison panel: real vs fantasized parametric fits as L vs C, with the train/held-out
+    # regions shaded (only for L-vs-C forms)
     ax = flat_axes[panel_idx]
     panel_idx += 1
     if supports_C:
         obs_df = train_df.loc[acquired_idx]
         real_params, _ = build_fit(obs_df, form_name=args.form, fit_quality=args.fit_quality)
-        fant_params = history_df.iloc[-1]["params"]
         _obs_pareto = get_pareto_frontier(obs_df, x_name="C", y_name="loss")
+        C_split = float(held_out_df["C"].min())          # pool | held-out boundary
+        ax.axvspan(C_split, float(held_out_df["C"].max()), color="#fca5a5", alpha=0.12, lw=0,
+                   label="held-out region")
         ax.scatter(_obs_pareto["C"], _obs_pareto["loss"], marker="x", color="black", zorder=3, label="observed")
-        ax.scatter(C_known, L_known, marker="x", color="tab:blue", zorder=3, label="held out")
+        ax.scatter(C_known, L_known, marker="X", color="#dc2626", zorder=5, label="held-out eval")
         C_grid = np.geomspace(obs_df["C"].min(), C_unknown.max(), 200)
         seen = C_grid <= obs_df["C"].max()
-        for params, color, label in [(real_params, "tab:green", "subsampled grid"), (fant_params, "red", "fantasized dense grid")]:
+        # fit on observed points only; add the surrogate-infilled ("fantasized") fit only when a
+        # surrogate ran -- model-free imputes nothing, so it would duplicate the observed-only curve.
+        curves = [(real_params, "tab:green", "subsampled grid")]
+        if args.model_type != "none":
+            curves.append((history_df.iloc[-1]["params"], "red", "fantasized dense grid"))
+        for params, color, label in curves:
             L_hat = form.to_L_vs_C(C_grid, np.asarray(params))
             ax.plot(C_grid[seen], L_hat[seen], color=color, ls="-", label=label)
             ax.plot(C_grid[~seen], L_hat[~seen], color=color, ls="--")
@@ -199,8 +215,10 @@ def _plot(args, form, supports_C, history_df, interp_names, train_df, acquired_i
         ax.plot(C_grid[~seen], L_global_hat[~seen], color="tab:purple", ls="--")
         ax.set_xscale("log")
         ax.set_xlabel("C"); ax.set_ylabel("loss")
-        ax.legend(fontsize=15)
-        ax.set_title("real vs fantasized fit (dashed = beyond seen C)")
+        ax.legend(fontsize=12)
+        title = "fit (dashed = beyond seen C)" if args.model_type == "none" else \
+                "real vs fantasized fit (dashed = beyond seen C)"
+        ax.set_title(title)
     else:
         ax.axis("off")  # width_depth: no compute axis to plot against
 
