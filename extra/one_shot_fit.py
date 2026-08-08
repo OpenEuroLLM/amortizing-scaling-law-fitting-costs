@@ -1,3 +1,9 @@
+"""One-shot surrogate fit: sample a fixed number of points once, fit a GP, then fit a
+pure power law L(C) = A*C^-alpha on the compute-optimal envelope and dump the coefficients.
+
+Unlike ``main.py`` (the iterative acquisition loop), this acquires a single batch and does a
+single fit -- kept as a lightweight baseline. Outputs one JSON per (model, selection, points, seed).
+"""
 import argparse
 import json
 
@@ -7,8 +13,8 @@ import pandas as pd
 from pathlib import Path
 from scipy.optimize import curve_fit
 
-from models import MODELS
-from selection import SELECTION
+from core.surrogates import MODELS
+from core.selection import SELECTION
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--seed', type=int, required=True)
