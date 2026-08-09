@@ -65,10 +65,10 @@ Sources with no `lr`/`gbsz` in the underlying data leave those columns blank -- 
 
 | Name | Definition |
 |---|---|
-| `N_total` | Every trainable parameter (embedding/head counted once if tied, twice if untied). Porian et al. (arXiv:2406.19146) call this `N_exact` -- the name `porian.csv` uses for its own column. |
-| `N_ne` | Excludes both the input embedding and output head/unembedding matrices ("non-embedding"). Porian et al. call this `N_Kaplan`, after Kaplan et al.'s original convention -- the name `porian.csv` uses for its own column. |
-| `N_Porian` | Porian et al.'s own default: excludes the input embedding but includes the head; close to `N_total` when embeddings are tied, since the head then reuses the embedding matrix. Only appears in `porian.csv`. |
-| `N_eff` | Porian et al.'s "effective" parameter count: `N_Porian` adjusted upward for attention-operation FLOPs (bigger relative effect on smaller models). Only appears in `porian.csv`. |
+| `N_total` | Every trainable parameter (embedding/head counted once if tied, twice if untied). Porian et al. (arXiv:2406.19146) call this `N_exact` -- the name the `porian_*.csv` files use for their own column. |
+| `N_ne` | Excludes both the input embedding and output head/unembedding matrices ("non-embedding"). Porian et al. call this `N_Kaplan`, after Kaplan et al.'s original convention -- the name the `porian_*.csv` files use for their own column. |
+| `N_Porian` | Porian et al.'s own default: excludes the input embedding but includes the head; close to `N_total` when embeddings are tied, since the head then reuses the embedding matrix. Only appears in `porian_*.csv`. |
+| `N_eff` | Porian et al.'s "effective" parameter count: `N_Porian` adjusted upward for attention-operation FLOPs (bigger relative effect on smaller models). Only appears in `porian_*.csv`. |
 
 ### Surrogate-based fit
 

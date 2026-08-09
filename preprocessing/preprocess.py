@@ -89,7 +89,14 @@ def adapt_steplaw_moe(df: pd.DataFrame) -> pd.DataFrame:
     ]
 
 
-def adapt_porian(df: pd.DataFrame) -> pd.DataFrame:
+def adapt_porian(df: pd.DataFrame, hparams: str, dataset: str, decay: str | None = None) -> pd.DataFrame:
+    # The raw file bundles runs from several experiments; each output dataset
+    # filters to one (hparams, dataset, decay) combination -- see
+    # data/raw/porian/README.md.
+    mask = (df["hparams"] == hparams) & (df["dataset"] == dataset)
+    if decay is not None:
+        mask &= df["decay"] == decay
+    df = df[mask]
     df = df.rename(columns={"bs": "gbsz"})
     df["loss"] = df["val/loss"].apply(lambda s: s.iloc[-1])
     df["D"] = df["seq_len"] * df["gbsz"] * df["max_step"]
@@ -102,7 +109,71 @@ def adapt_porian(df: pd.DataFrame) -> pd.DataFrame:
     # --input; N_exact/N_eff/N_Kaplan stay available as their own columns
     # until the fitting scripts support choosing a variant.
     df["N"] = df["N_Porian"]
-    return df[COLUMNS + ["N_Porian", "N_exact", "N_eff", "N_Kaplan"]]
+    # warmup_iters: warmup_tokens (raw) converted to steps at this run's own
+    # seq_len/gbsz.
+    df["warmup_iters"] = (df["warmup_tokens"] / (df["seq_len"] * df["gbsz"])).apply(math.ceil)
+    # decay_iters/min_lr: derived per raw "decay" value, verified against
+    # the raw per-step "train/lr" curves. "const" (Sec. 3.5) holds the LR
+    # flat after warmup -- no decay, so decay_iters/min_lr don't apply
+    # (None, as for gemstones' non-decaying rows). "chinchilla" (Sec. 3.4)
+    # cosine-decays from the end of warmup to exactly 1% of peak lr at the
+    # run's own max_step -- confirmed across the whole chinchilla set:
+    # floor/peak converges to ~0.01 right at max_step regardless of
+    # max_step's value, so decay_iters = max_step - warmup_iters and
+    # min_lr = 0.01 * lr. "kaplan" (Sec. 3.1) cosine-decays to exactly 0 at
+    # a fixed token target (2.5e5 * 2**19 ~= 131B tokens) shared by every
+    # kaplan run regardless of model size -- confirmed by reproducing each
+    # run's logged floor value from a cosine formula using that shared
+    # target (matches to 6 decimal places across all 64 rows).
+    kaplan_decay_end_tokens = 2.5e5 * 2**19
+    df["decay_iters"] = float("nan")
+    df["min_lr"] = float("nan")
+    is_chinchilla = df["decay"] == "chinchilla"
+    if is_chinchilla.any():
+        df.loc[is_chinchilla, "decay_iters"] = (
+            df.loc[is_chinchilla, "max_step"] - df.loc[is_chinchilla, "warmup_iters"]
+        )
+        df.loc[is_chinchilla, "min_lr"] = 0.01 * df.loc[is_chinchilla, "lr"]
+    is_kaplan = df["decay"] == "kaplan"
+    if is_kaplan.any():
+        df.loc[is_kaplan, "decay_iters"] = (
+            (kaplan_decay_end_tokens - df.loc[is_kaplan, "warmup_tokens"])
+            / (df.loc[is_kaplan, "seq_len"] * df.loc[is_kaplan, "gbsz"])
+        ).apply(math.ceil)
+        df.loc[is_kaplan, "min_lr"] = 0.0
+    df["lr_schedule"] = df["decay"].map({"const": "stable", "chinchilla": "cosine_decay", "kaplan": "cosine_decay"})
+    # tied_embeddings: not a raw column: confirmed by reconstructing N_exact as
+    # N_Kaplan (non-embedding params) + one vocab*width embedding matrix, which
+    # matches the lookup table to within ~0.1% across all 16 architectures --
+    # two matrices (untied) would overshoot N_exact by 8-94%.
+    df["tied_embeddings"] = True
+    return df[
+        COLUMNS
+        + ["N_Porian", "N_exact", "N_eff", "N_Kaplan"]
+        + ["width", "depth", "seq_len", "lr_schedule", "decay_iters", "min_lr", "warmup_iters", "seed"]
+        + ["tied_embeddings"]
+    ]
+
+
+# porian_{purpose}_{schedule}_{dataset}_n{rows} -- see
+# data/raw/porian/README.md for what each part means. Maps to (raw "hparams"
+# value, raw "dataset" value, raw "decay" value or None to skip that filter).
+PORIAN_RAW_DIR = "porian"
+PORIAN_VARIANTS = {
+    "porian_main_stable_rw_n566": ("sweep", "rw", None),
+    "porian_chinchilla_cosine_decay_rw_n100": ("base", "rw", "chinchilla"),
+    "porian_chinchilla_cosine_decay_owt2_n100": ("base", "owt2", "chinchilla"),
+    "porian_kaplan_cosine_decay_rw_n32": ("base", "rw", "kaplan"),
+    "porian_kaplan_cosine_decay_owt2_n32": ("base", "owt2", "kaplan"),
+    "porian_seed_stable_rw_n42": ("seed", "rw", None),
+    "porian_seed_stable_owt2_n42": ("seed", "owt2", None),
+    "porian_tuned_stable_rw_n32": ("tuned", "rw", None),
+    "porian_tuned_stable_owt2_n29": ("tuned", "owt2", None),
+}
+
+
+def _porian_adapter(hparams: str, dataset: str, decay: str | None):
+    return partial(adapt_porian, hparams=hparams, dataset=dataset, decay=decay)
 
 
 def adapt_gemstones(
@@ -264,7 +335,10 @@ ADAPTERS = {
     "oellm_multilingual": (adapt_oellm_multilingual, "decay_points_clean.csv", "csv"),
     "steplaw_dense_n1911": (adapt_steplaw_dense, "dense_lr_bs_loss.csv", "csv"),
     "steplaw_moe_n708": (adapt_steplaw_moe, "moe_lr_bs_loss.csv", "csv"),
-    "porian": (adapt_porian, "experiment_results.pickle.xz", "pickle"),
+    **{
+        name: (_porian_adapter(hparams, dataset, decay), "experiment_results.pickle.xz", "pickle")
+        for name, (hparams, dataset, decay) in PORIAN_VARIANTS.items()
+    },
     **{
         name: (_gemstone_adapter(name), filename, "jsonl")
         for name, filename in GEMSTONE_VARIANTS.items()
@@ -323,6 +397,8 @@ def main():
             raw_dir = RAW_DIR / GEMSTONE_RAW_DIR
         elif name in STEPLAW_RAW_DIRS:
             raw_dir = RAW_DIR / STEPLAW_RAW_DIRS[name]
+        elif name in PORIAN_VARIANTS:
+            raw_dir = RAW_DIR / PORIAN_RAW_DIR
         else:
             raw_dir = RAW_DIR / name
         try:
