@@ -54,8 +54,7 @@ class ScalingLawMean_L0_form(_ConstrainedMean):
     def __init__(
         self,
         init_params: List[float] = (0.2, 3.5, -0.5),
-        col_N: int = 0,
-        col_D: int = 1,
+        col_C: int = 0,
         bounds: List[tuple] | None = None,
         use_bounds: bool = True,
         **kwargs
@@ -68,11 +67,10 @@ class ScalingLawMean_L0_form(_ConstrainedMean):
         # registering to ensure they are optimized during MLL training
         for name, value, bound in zip(self.PARAM_NAMES, init_params, bounds):
             self._register(name, value, bound)
-        self.col_N = col_N
-        self.col_D = col_D
+        self.col_C = col_C
 
     def forward(self, x):
-        logC = torch.log(torch.tensor(6.0, dtype=torch.float64)) + x[..., self.col_N] + x[..., self.col_D]        # cols 0,1 = log N, log D
+        logC = x[..., self.col_C]        # cols 0 = log C
         return self._value("l0").exp() + torch.exp(self._value("a") + self._value("b") * logC)
 
 

@@ -104,7 +104,7 @@ def build_surrogate(
     test_y: np.ndarray | None = None,
     model_type: str = "gp",
     **kwargs
-) -> tuple[np.ndarray, float]:
+) -> tuple[np.ndarray, float, object]:
     if model_type in MODELS:
         model = MODELS[model_type](**kwargs)
     else:
@@ -116,7 +116,7 @@ def build_surrogate(
     if test_y is not None:
         mse = np.mean((test_y - pred_y.flatten()) ** 2)
 
-    return pred_y, mse
+    return pred_y, mse, model
 
 
 def build_fit(
@@ -244,7 +244,7 @@ if __name__ == "__main__":
     _best_fit_loss, _best_fit_params = np.inf, None
     _global_df = pd.concat((train_df, test_df_known))
     print("\nBuilding global surrogate on all data as a baseline...")
-    global_pred, global_mse = build_surrogate(
+    global_pred, global_mse, _ = build_surrogate(
         np.log(_global_df[INPUT_X].to_numpy()),
         _global_df[OUTPUT_Y].to_numpy()[:, None],
         np.log(test_df_known[INPUT_X].to_numpy()),
@@ -334,7 +334,7 @@ if __name__ == "__main__":
                 observations[INPUT_X + ["C", OUTPUT_Y]], form_name=args.form, fit_quality=args.fit_quality)
         else:
             # surrogate: fit a GP on observations (log-features), predict the unacquired rest
-            pred_y, heldout_mse = build_surrogate(
+            pred_y, heldout_mse, _ = build_surrogate(
                 np.log(observations[INPUT_X].to_numpy()),
                 observations[OUTPUT_Y].to_numpy()[:, None],
                 np.log(train_df.loc[remaining_idx, INPUT_X].to_numpy()),
