@@ -252,8 +252,8 @@ def _gemstone_adapter(name: str):
 
 
 STEPLAW_RAW_DIRS = {
-    "steplaw_dense_n1911": "steplaw_dense",
-    "steplaw_moe_n708": "steplaw_moe",
+    "steplaw_dense_n1911": "steplaw",
+    "steplaw_moe_n708": "steplaw",
 }
 
 # name -> (adapter, raw filename(s), file format). filename(s) is a list for

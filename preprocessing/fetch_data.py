@@ -15,22 +15,18 @@ GIT_SOURCES = {
 
     "oellm_english": {
         "repo": "https://github.com/OpenEuroLLM/dense_english_scaling_results.git",
-        "path": "data/preprocessed/all_points_clean.csv",
+        "paths": ["data/preprocessed/all_points_clean.csv"],
     },
-    
+
     "oellm_multilingual": {
         "repo": "https://github.com/OpenEuroLLM/dense_multilingual_models_scaling_results.git",
-        "path": "scaling_laws/data/preprocessed/decay_points_clean.csv",
+        "paths": ["scaling_laws/data/preprocessed/decay_points_clean.csv"],
     },
     # Li et al., "Predictable Scale: Part I, Step Law -- Optimal Hyperparameter
     # Scaling Law in Large Language Model Pretraining", arXiv:2503.04715.
-    "steplaw_dense": {
+    "steplaw": {
         "repo": "https://github.com/step-law/steplaw.git",
-        "path": "data/dense_lr_bs_loss.csv",
-    },
-    "steplaw_moe": {
-        "repo": "https://github.com/step-law/steplaw.git",
-        "path": "data/moe_lr_bs_loss.csv",
+        "paths": ["data/dense_lr_bs_loss.csv", "data/moe_lr_bs_loss.csv"],
     },
 }
 
@@ -91,9 +87,9 @@ SPLIT_URL_SOURCES = {
 }
 
 
-def fetch_git(name: str, repo: str, path: str) -> Path:
-    dest = RAW_DIR / name / Path(path).name
-    dest.parent.mkdir(parents=True, exist_ok=True)
+def fetch_git(name: str, repo: str, paths: list) -> Path:
+    dest_dir = RAW_DIR / name
+    dest_dir.mkdir(parents=True, exist_ok=True)
 
     with tempfile.TemporaryDirectory() as tmp:
         subprocess.run(
@@ -101,12 +97,14 @@ def fetch_git(name: str, repo: str, path: str) -> Path:
             check=True,
         )
         subprocess.run(
-            ["git", "-C", tmp, "sparse-checkout", "set", str(Path(path).parent)],
+            ["git", "-C", tmp, "sparse-checkout", "set"]
+            + [str(Path(path).parent) for path in paths],
             check=True,
         )
-        shutil.copyfile(Path(tmp) / path, dest)
+        for path in paths:
+            shutil.copyfile(Path(tmp) / path, dest_dir / Path(path).name)
 
-    return dest
+    return dest_dir
 
 
 def fetch_url(name: str, url: str, filename: str) -> Path:
@@ -126,7 +124,7 @@ def fetch_split(name: str, base_url: str, filenames: list) -> Path:
 
 def main():
     for name, cfg in GIT_SOURCES.items():
-        dest = fetch_git(name, cfg["repo"], cfg["path"])
+        dest = fetch_git(name, cfg["repo"], cfg["paths"])
         print(f"{name}: fetched -> {dest}")
     for name, cfg in URL_SOURCES.items():
         dest = fetch_url(name, cfg["url"], cfg["filename"])

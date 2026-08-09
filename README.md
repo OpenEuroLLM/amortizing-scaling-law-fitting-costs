@@ -37,8 +37,7 @@ uv run python preprocessing/preprocess.py    # -> data/preprocessed/<source>.csv
 |---|---|---|
 | `oellm_english` | OpenEuroLLM dense English scaling results (private repo) | yes |
 | `oellm_multilingual` | OpenEuroLLM dense multilingual scaling results (private repo) | yes |
-| `steplaw_dense` | Li et al., arXiv:2503.04715 | yes |
-| `steplaw_moe` | Li et al., arXiv:2503.04715 | yes |
+| `steplaw` | Li et al., arXiv:2503.04715 | yes |
 | `porian` | Porian et al., arXiv:2406.19146 | yes |
 | `gemstones` | McLeish et al., arXiv:2502.06857 | no |
 | `activesl_lr_bsz` | active-experiment-selection benchmark, arXiv:2604.22753 | yes |
