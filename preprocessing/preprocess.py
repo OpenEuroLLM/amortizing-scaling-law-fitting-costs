@@ -37,16 +37,77 @@ PORIAN_PARAM_LOOKUP_M = {
 PORIAN_N_VARIANTS = ["N_Porian", "N_exact", "N_eff", "N_Kaplan"]
 
 
+# Table 1 ("Model architectures"), Sec. 1.1 of Ajroldi, "Scaling of
+# OpenEuroLLM Dense English Models" (see data/raw/oellm_english/README.md),
+# keyed by exact N (non-embedding parameter count -- matches Table 1's "Total
+# parameters" row exactly, and is independently reconstructed by
+# vocab_size(50,000) * width == the embedding-matrix size subtracted out in
+# scripts/preprocess.ipynb's model_sizes dict, for all 5 sizes). The raw
+# file's held-out 1.7B rows aren't in Table 1, so are left without an
+# architecture (None).
+OELLM_ENGLISH_ARCH = {
+    47_557_632: {"width": 384, "depth": 12, "num_heads": 6, "ffn": 1536},
+    124_455_168: {"width": 576, "depth": 18, "num_heads": 9, "ffn": 2304},
+    301_880_320: {"width": 896, "depth": 20, "num_heads": 14, "ffn": 3584},
+    588_544_000: {"width": 1280, "depth": 20, "num_heads": 20, "ffn": 5120},
+    983_138_304: {"width": 1536, "depth": 24, "num_heads": 24, "ffn": 6144},
+}
+
+
 def adapt_oellm_english(df: pd.DataFrame) -> pd.DataFrame:
-    return df[COLUMNS]
+    df = df.copy()
+    arch = df["N"].map(OELLM_ENGLISH_ARCH)
+    for key in ("width", "depth", "num_heads", "ffn"):
+        df[key] = arch.apply(lambda a, key=key: a[key] if isinstance(a, dict) else None)
+    df["tied_embeddings"] = True  # Sec. 1.1: "tied input/output embeddings"
+    df["seq_len"] = 4096  # scripts/preprocess.ipynb SEQ_LENGTH; reconstructs train_tokens exactly
+    df["N_definition"] = "N_ne"
+    df["warmup_iters"] = 2000  # fixed across all runs (Sec. 1.1 / scripts/clean.ipynb)
+    df["lr_schedule"] = "linear_decay"  # WSD decay phase is linear (confirmed)
+    # decay covers the final 20% of each run's own steps (Sec. 3, "WSD
+    # Analysis"); `iteration` is the run's final step, matching
+    # scripts/preprocess.ipynb's own branching-checkpoint formula
+    # (floor(iteration * 0.8)).
+    decay_start = (df["iteration"] * 0.8).apply(math.floor)
+    df["decay_iters"] = df["iteration"] - decay_start
+    df["min_lr"] = 1e-5  # Sec. 3: decay always anneals to a fixed floor lr of 1e-5
+    return df[
+        COLUMNS
+        + ["width", "depth", "tied_embeddings", "seq_len", "N_definition"]
+        + ["lr_schedule", "warmup_iters", "decay_iters", "min_lr"]
+        + ["num_heads", "ffn", "beta2", "seed"]
+    ]
 
 
 def adapt_oellm_multilingual(df: pd.DataFrame) -> pd.DataFrame:
-    # N is ambiguous in this source (N_ne_*, N_total_*, N_Porian_*); using the
-    # Porian et al. convention -- this choice (and D/lr/gbsz) has not been
-    # verified against the source's intent.
-    df = df.rename(columns={"N_Porian_exact": "N"})
-    return df[COLUMNS]
+    # N defaults to N_Porian_exact, matching this source's own repo-root
+    # README.md ("N_Porian" convention) and its utils.py (N_Porian_exact ==
+    # N_total_exact here, since all runs use tied embeddings); N_ne/N_total
+    # are kept as their own columns too, using the project's N-variant names
+    # (README.md's "N-variant vocabulary") -- this source's own README
+    # confirms N_ne/N_total/N_Porian match those definitions directly.
+    df = df.rename(columns={
+        "N_Porian_exact": "N",
+        "N_ne_exact": "N_ne",
+        "N_total_exact": "N_total",
+    })
+    df["tied_embeddings"] = True  # repo README: untie_embeddings_and_output_weights: False
+    df["seq_len"] = 4096  # preprocess_decay.py SEQ_LEN / hp_selection/utils.py compute_checkpoint_iter
+    df["N_definition"] = "N_Porian"
+    df["lr_schedule"] = "linear_decay"  # WSD decay phase is linear (confirmed)
+    df["warmup_iters"] = 2000  # fixed across all runs (confirmed)
+    # decay covers the final 20% of each run's own steps (hp_selection/utils.py
+    # compute_checkpoint_iter's decay_fraction=0.2, "constant across the whole
+    # multilingual_scaling model family"); `iteration` is the run's final step
+    # (decay_points_clean.csv already filters to iteration == expected_iters).
+    decay_start = (df["iteration"] * 0.8).apply(math.floor)
+    df["decay_iters"] = df["iteration"] - decay_start
+    df["min_lr"] = 0  # decay floor (confirmed)
+    return df[
+        COLUMNS
+        + ["N_ne", "N_total", "tied_embeddings", "seq_len", "N_definition"]
+        + ["lr_schedule", "warmup_iters", "decay_iters", "min_lr"]
+    ]
 
 
 def adapt_steplaw_dense(df: pd.DataFrame) -> pd.DataFrame:
