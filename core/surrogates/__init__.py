@@ -26,7 +26,7 @@ def build_surrogate(
     test_y: np.ndarray | None = None,
     model_type: str = "gp",
     **kwargs
-) -> tuple[np.ndarray, float]:
+) -> tuple[np.ndarray, float, object]:
     if model_type in MODELS:
         model = MODELS[model_type](**kwargs)
     else:
@@ -38,7 +38,7 @@ def build_surrogate(
     if test_y is not None:
         mse = np.mean((test_y - pred_y.flatten()) ** 2)
 
-    return pred_y, mse
+    return pred_y, mse, model
 
 
 __all__ = [
