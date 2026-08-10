@@ -54,7 +54,8 @@ class ScalingLawMean_L0_form(_ConstrainedMean):
     def __init__(
         self,
         init_params: List[float] = (0.2, 3.5, -0.5),
-        col_C: int = 0,
+        col_N: int = 0,
+        col_D: int = 1,
         bounds: List[tuple] | None = None,
         use_bounds: bool = True,
         **kwargs
@@ -67,11 +68,22 @@ class ScalingLawMean_L0_form(_ConstrainedMean):
         # registering to ensure they are optimized during MLL training
         for name, value, bound in zip(self.PARAM_NAMES, init_params, bounds):
             self._register(name, value, bound)
-        self.col_C = col_C
+        self.col_N = col_N
+        self.col_D = col_D
 
     def forward(self, x):
-        logC = x[..., self.col_C]        # cols 0 = log C
-        return self._value("l0").exp() + torch.exp(self._value("a") + self._value("b") * logC)
+        # x holds log-features; any number of columns is fine, we only read col_N/col_D.
+        # C = 6*N*D  =>  log C = log 6 + log N + log D
+        if x.shape[-1] <= max(self.col_N, self.col_D):
+            raise ValueError(
+                f"Input has {x.shape[-1]} columns; need indices "
+                f"col_N={self.col_N}, col_D={self.col_D}."
+            )
+        logC = np.log(6.0) + x[..., self.col_N] + x[..., self.col_D]
+        l0 = self._value("l0").to(logC.dtype)
+        a = self._value("a").to(logC.dtype)
+        b = self._value("b").to(logC.dtype)
+        return l0.exp() + torch.exp(a + b * logC)
 
 
 class ScalingLawMean_chin3_form(_ConstrainedMean):
