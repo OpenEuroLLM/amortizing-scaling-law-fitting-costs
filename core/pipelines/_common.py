@@ -42,6 +42,14 @@ def score_law_frontier(df_set, form, params, supports_C):
     return float(np.mean((L_hat - L_true) ** 2))
 
 
+def mse_on_frontier(front: pd.DataFrame, form, params) -> float:
+    if front.empty:
+        return float("nan")
+    L_hat = form.to_L_vs_C(front["C"].to_numpy(dtype=float), params)
+    L_true = front["loss"].to_numpy(dtype=float)
+    return float(np.mean((L_hat - L_true) ** 2))
+
+
 def add_acquisition_args(parser):
     """CLI flags shared by every acquisition-loop task. Tasks add their own ``--form``."""
     parser.add_argument('--seed', type=int, required=True)
@@ -129,6 +137,7 @@ def run_acquisition(args, form, gp_features, train_df, global_best_params, fit_g
     C_lim = train_df.C.min() * args.init_compute_factor
     pool = next_batch_compute(train_df, acquired_idx=None, C_max=C_lim, C_window=args.C_window)
     acquired_idx = pd.Index(rng.choice(pool.index, args.init_points, replace=False))
+    init_points_idx = acquired_idx.copy()
     total_compute_spent = train_df.loc[acquired_idx, "C"].sum()
 
     history = []
@@ -178,7 +187,7 @@ def run_acquisition(args, form, gp_features, train_df, global_best_params, fit_g
         # fit the surrogate on observations (log-features), predict the unacquired rest.
         # model-free (NullSurrogate) predicts NaN everywhere, so the dropna below leaves only
         # the observed points -- a fit-on-observations baseline, with no branch here.
-        pred_y, heldout_mse = build_surrogate(
+        pred_y, heldout_mse, _ = build_surrogate(
             np.log(observations[gp_features].to_numpy()),
             observations[GRID_TARGET].to_numpy()[:, None],
             np.log(train_df.loc[remaining_idx, gp_features].to_numpy()),
@@ -193,7 +202,7 @@ def run_acquisition(args, form, gp_features, train_df, global_best_params, fit_g
         df_pred.loc[remaining_idx, GRID_TARGET] = pred_y
         df_pred = df_pred.dropna(subset=[GRID_TARGET])
         best_params, best_loss = fit_grid(df_pred)
-        print(f"#Iteration {iter_idx}: Fitting loss={best_loss:2.2e}", end="; ")
+        print(f"#Iteration {iter_idx} on {observations.shape[0]} points: Fitting loss={best_loss:2.2e}", end="; ")
         print_fit_results(form, best_params)
 
         # regrets in interpretable space; irreducible-loss-like terms (form.signed_params) keep sign

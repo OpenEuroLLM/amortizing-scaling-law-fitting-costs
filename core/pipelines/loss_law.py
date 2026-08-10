@@ -76,6 +76,7 @@ def run(args):
         df, held_out_frac=args.held_out_frac, axis=args.split_axis
     )
     train_df = pool_df                        # the loop acquires only from the pool
+    test_df_known = held_out_df
     print(f"Split (axis={args.split_axis}): pool={len(pool_df)} / held-out={len(held_out_df)}")
 
     form = PARAMETRIC_FORMS[args.form]
@@ -84,7 +85,7 @@ def run(args):
     # --- ground truth: global surrogate baseline + global parametric fit (all data) ---
     _global_df = pd.concat((pool_df, held_out_df))
     print("\nBuilding global surrogate on all data as a baseline...")
-    build_surrogate(
+    global_pred, global_mse, gp_surrogate = build_surrogate(
         np.log(_global_df[gp_features].to_numpy()),
         _global_df[GRID_TARGET].to_numpy()[:, None],
         np.log(held_out_df[gp_features].to_numpy()),
@@ -92,11 +93,26 @@ def run(args):
         use_mean_model=True if args.gp_mean_as_l0 else False,
         diagnose=args.diagnose_gp,
     )
-    print("Fitting parametric form on the global surrogate...")
+    print(f"Fitting parametric form on all of the data {_global_df.shape}...")
     global_best_params, _ = build_fit(
         _global_df, form_name=args.form, y_name="loss", fit_quality=args.fit_quality
     )
     print_fit_results(form, global_best_params)
+    
+    ### get scaling law parameters from training data all methods should converge to this
+    print(f"Fitting parametric form on all of the training data {train_df.shape}...")
+
+    # build fit first extracts pareto frontier and then fits the L0 parametric form
+    train_best_params, train_best_loss = build_fit(
+        train_df, form_name=args.form, y_name="loss", fit_quality=args.fit_quality
+    )
+    print_fit_results(form, train_best_params)
+    
+    # Compute train and held-out pareto frontiers
+    combined = pd.concat([train_df, test_df_known])
+    global_pareto = get_pareto_frontier(combined, x_name='C', y_name="loss")
+    _pool_pareto = global_pareto.loc[global_pareto.index.isin(train_df.index)]
+    _held_pareto  = global_pareto.loc[global_pareto.index.isin(test_df_known.index)]
 
     # --- scoring setup + per-iteration callbacks ---
     # Score the fitted law on both regions: the acquire-able pool (in-region recovery) and the
@@ -104,7 +120,6 @@ def run(args):
     # width_depth scores loss directly at the config points. The held-out frontier + a synthetic
     # beyond-grid extension also drive the fit-comparison plot panel.
     if supports_C:
-        _held_pareto = get_pareto_frontier(held_out_df, x_name="C", y_name="loss")
         C_known = _held_pareto["C"].to_numpy()
         L_known = _held_pareto["loss"].to_numpy()
         C_unknown = C_known.max() * 10.0 ** np.arange(1, 6)   # extrapolation curve beyond the grid
@@ -116,8 +131,11 @@ def run(args):
         return build_fit(df_pred, form_name=args.form, fit_quality=args.fit_quality)
 
     def heldout_metric(params):
-        mse_pool = _common.score_law_frontier(pool_df, form, params, supports_C)
-        mse_held = _common.score_law_frontier(held_out_df, form, params, supports_C)
+        # mse_pool = _common.score_law_frontier(pool_df, form, params, supports_C)
+        # mse_held = _common.score_law_frontier(held_out_df, form, params, supports_C)
+        mse_pool = _common.mse_on_frontier(_pool_pareto, form, params)
+        mse_held = _common.mse_on_frontier(_held_pareto, form, params)
+        
         out = {
             "law_mse_pool": mse_pool,
             "law_mse_held_out": mse_held,
