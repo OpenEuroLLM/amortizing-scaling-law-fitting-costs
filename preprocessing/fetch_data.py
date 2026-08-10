@@ -12,12 +12,12 @@ from pathlib import Path
 RAW_DIR = Path(__file__).parent.parent / "data" / "raw"
 
 GIT_SOURCES = {
-
+    # TODO: add a link to the tech report once it's published.
     "oellm_english": {
         "repo": "https://github.com/OpenEuroLLM/dense_english_scaling_results.git",
         "paths": ["data/preprocessed/all_points_clean.csv"],
     },
-
+    # TODO: add a link to the tech report once it's published.
     "oellm_multilingual": {
         "repo": "https://github.com/OpenEuroLLM/dense_multilingual_models_scaling_results.git",
         "paths": ["scaling_laws/data/preprocessed/decay_points_clean.csv"],
@@ -37,6 +37,13 @@ URL_SOURCES = {
         "url": "https://raw.githubusercontent.com/formll/resolving-scaling-law-discrepancies/main/data/experiment_results.pickle.xz",
         "filename": "experiment_results.pickle.xz",
     },
+    # Mallik et al., "When is Warmstarting Effective for Scaling Language
+    # Models?", arXiv:2605.13405. Drive link the authors share for the raw
+    # data in a sibling project's: EffingScaling/README.md; "Warmstarting Data".
+    "warmstart": {
+        "url": "https://drive.google.com/uc?export=download&id=1vr5Jq1TpTpnkb5CX5mcu2wWQQzbf-bmd",
+        "filename": "warmstart_runs_flattened.parquet",
+    },
 }
 
 # Sources fetched as multiple files sharing a base URL, downloaded into one
@@ -47,7 +54,8 @@ SPLIT_URL_SOURCES = {
     # "Spend Less, Fit Better: Budget-Efficient Scaling Law Fitting via Active
     # Experiment Selection" (arXiv:2604.22753). Only the sub-datasets whose
     # columns map onto N/D/lr/gbsz/loss (or a subset of it) are included here
-    # -- other sub-datasets are excluded because their columns don't fit.
+    # -- other sub-datasets are excluded because their columns don't fit the 
+    # pattern at the moment.
     "activesl_lr_bsz": {
         "base_url": "https://raw.githubusercontent.com/PlanarG/active-sl/main/benchmark/dataset/lr_bsz_scaling_law",
         "filenames": ["train-00000-of-00001.parquet", "test-00000-of-00001.parquet"],

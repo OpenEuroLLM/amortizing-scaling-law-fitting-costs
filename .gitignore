@@ -22,6 +22,9 @@ data/raw/oellm_english/*
 !data/raw/oellm_multilingual/
 data/raw/oellm_multilingual/*
 !data/raw/oellm_multilingual/README.md
+!data/raw/warmstart/
+data/raw/warmstart/*
+!data/raw/warmstart/README.md
 output*/
 results/
 

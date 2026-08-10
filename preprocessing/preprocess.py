@@ -343,26 +343,70 @@ def adapt_activesl_data_constrained(df: pd.DataFrame) -> pd.DataFrame:
     return df[COLUMNS + ["unique_tokens"]]
 
 
-def adapt_warmstart(df: pd.DataFrame) -> pd.DataFrame:
-    # Per-step logs (one row per eval, ~2.4M rows); collapsed to one row per
-    # run -- identified by its `post_hoc_df` output path -- using the last
-    # checkpoint that has a logged Validation Loss (a couple of runs are
-    # missing their final eval, so this isn't always literally the last step).
-    # N is `target_N`, the post-growth size actually being evaluated;
-    # `base_N` (the pre-growth size the run warmstarted from), `shrink`,
-    # `warmstart_type`, and `method` are kept as extra columns since they
-    # identify the warmstarting technique, not something the common schema
-    # has a slot for.
+def adapt_warmstart(df: pd.DataFrame, method: str) -> pd.DataFrame:
+    # Per-step logs (~2.5M rows), one row per eval. `post_hoc_df` is each
+    # run's own output-file path, so grouping by it and keeping the row with
+    # the largest `tokens` that has a logged `Validation Loss` gives that
+    # run's final validation loss (a couple of runs are missing their true
+    # final eval, so this isn't always literally the last step; some raw
+    # rows have no `post_hoc_df`/`Validation Loss` at all -- groupby drops
+    # them by default).
+    #
+    # The raw `method` column bundles 3 initialization techniques compared
+    # on the same (N, D) grid: "mup" (Scratch, muP-transferred
+    # hyperparameters, no inherited weights), "net2net" (Net2Net growth),
+    # "paws" (the paper's Shrink-Zeros-Perturb/SZP method, Eq. 2 of
+    # arXiv:2605.13405). Each has a different loss(N, D) surface, so each
+    # gets its own output dataset (WARMSTART_VARIANTS below).
+    #
+    # N = target_N (the post-growth size evaluated); `base_N` (the
+    # pre-growth size warmstarted from -- also the scale the run's
+    # muP-transferred hyperparameters came from) is kept as an extra column.
     df = df.dropna(subset=["Validation Loss"]).sort_values("tokens")
     df = df.groupby("post_hoc_df", as_index=False).tail(1)
+    df = df[df["method"] == method]
     df = df.rename(columns={
         "target_N": "N",
         "tokens": "D",
         "max_lr": "lr",
         "Validation Loss": "loss",
+        "n_embd": "width",
+        "n_layer": "depth",
+        "block_size": "seq_len",
     })
     df["gbsz"] = df["micro_batch_size"] * df["accumulation_iters"] * df["devices"]
-    return df[COLUMNS + ["base_N", "shrink", "warmstart_type", "method"]]
+    # N (target_N/base_N) matches width/depth exactly via
+    # 12*depth*width**2 + 101482*width (attention 4*width**2 + a 4x-ratio MLP
+    # 8*width**2, no bias) across all 6 architectures in the paper's Table 5.
+    # The 101482*width remainder mixes embedding/head/positional params the
+    # paper doesn't break down, so tied_embeddings remains unknown.
+    df["N_definition"] = "N_total"
+    df["tied_embeddings"] = None
+    # Appendix D.2: warmup-stable-decay with a linear cooldown to 0, warmup/
+    # cooldown fixed at 1%/20% of each run's own total steps
+    df["lr_schedule"] = "linear_decay"
+    total_steps = df["D"] / (df["seq_len"] * df["gbsz"])
+    df["warmup_iters"] = (df["warmup_fraction"] * total_steps).apply(round)
+    df["decay_iters"] = (df["cooldown_fraction"] * total_steps).apply(round)
+    return df[
+        COLUMNS
+        + ["width", "depth", "tied_embeddings", "seq_len", "N_definition"]
+        + ["lr_schedule", "warmup_iters", "decay_iters", "min_lr"]
+        + ["base_N"]
+    ]
+
+
+# warmstart_{method}_n{rows} -- see data/raw/warmstart/README.md. 
+WARMSTART_RAW_DIR = "warmstart"
+WARMSTART_VARIANTS = {
+    "warmstart_scratch_n33": "mup",
+    "warmstart_net2net_n27": "net2net",
+    "warmstart_szp_n110": "paws",
+}
+
+
+def _warmstart_adapter(method: str):
+    return partial(adapt_warmstart, method=method)
 
 
 # Picks lr_base/decay_phase/is_gemstones_run for a GEMSTONE_VARIANTS name.
@@ -419,9 +463,10 @@ ADAPTERS = {
         ["train-00000-of-00001.parquet", "test-00000-of-00001.parquet"],
         "parquet",
     ),
-    # No public source; raw file must be placed manually at
-    # data/raw/warmstart/warmstart_runs_flattened.parquet.
-    "warmstart": (adapt_warmstart, "warmstart_runs_flattened.parquet", "parquet"),
+    **{
+        name: (_warmstart_adapter(method), "warmstart_runs_flattened.parquet", "parquet")
+        for name, method in WARMSTART_VARIANTS.items()
+    },
 }
 
 READERS = {
@@ -460,6 +505,8 @@ def main():
             raw_dir = RAW_DIR / STEPLAW_RAW_DIRS[name]
         elif name in PORIAN_VARIANTS:
             raw_dir = RAW_DIR / PORIAN_RAW_DIR
+        elif name in WARMSTART_VARIANTS:
+            raw_dir = RAW_DIR / WARMSTART_RAW_DIR
         else:
             raw_dir = RAW_DIR / name
         try:

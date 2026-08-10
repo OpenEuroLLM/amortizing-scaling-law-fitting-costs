@@ -43,11 +43,9 @@ uv run python preprocessing/preprocess.py    # -> data/preprocessed/<source>.csv
 | `activesl_lr_bsz` | active-experiment-selection benchmark, arXiv:2604.22753 | yes |
 | `activesl_farseer` | active-experiment-selection benchmark, arXiv:2604.22753 | no |
 | `activesl_data_constrained` | active-experiment-selection benchmark, arXiv:2604.22753 | no |
-| `warmstart` | warmstarting-for-scaling-language-models runs (no public source -- see below) | yes |
+| `warmstart` | Mallik et al., arXiv:2605.13405 | yes |
 
 Sources with no `lr`/`gbsz` in the underlying data leave those columns blank -- usable with `fit_scaling_laws_loss_vs_compute.py` but not `model_based_fits.py`/`iterative_fits_L0_form.py`, which need all four features.
-
-`warmstart` has no automated fetch step: its raw file has no public source, so `data/raw/warmstart/warmstart_runs_flattened.parquet` must be placed manually before running `preprocess.py`.
 
 5 sub-datasets from the active-experiment-selection benchmark (arXiv:2604.22753) aren't included, because their columns don't reduce to `N, D, lr, gbsz, loss` at all yet:
 
