@@ -4,13 +4,13 @@ Niccolò Ajroldi, "Scaling of OpenEuroLLM Dense English Models" (technical
 report, `OELLM___HP_Scaling_Laws.pdf` in the repository root), repository at
 https://github.com/OpenEuroLLM/dense_english_scaling_results.
 
-Ajroldi provides a collection of 890 training runs across 5 dense
-decoder-only architectures (47.6M-983.1M non-embedding parameters, Table 1)
-plus a 6th, 1.7B-parameter size held out as an extrapolation test point (not
-in Table 1). Models are pretrained on the high-quality subset of Nemotron-CC
-up to 300BT, with intermediate checkpoints decayed at D = 6, 12, 20, 30, 50,
-80, 120, 200, 300 BT, over a learning-rate x batch-size grid per (N, D) pair
-(Sec. 1.1).
+Ajroldi provides a collection of dense decoder-only architectures at 5 sizes
+(47.6M-983.1M non-embedding parameters, Table 1) plus a 6th, 1.7B-parameter
+size held out as an extrapolation test point (not in Table 1), pretrained on
+the high-quality subset of Nemotron-CC up to 300BT with intermediate
+checkpoints decayed at 9 token budgets (D = 6, 12, 20, 30, 50, 80, 120, 200,
+300 BT), over a learning-rate x batch-size grid per (N, D) pair, for 890
+training runs total (Sec. 1.1).
 
 All runs share AdamW, a 50,000-token vocabulary, FFN expansion factor 4 with
 GLU activations, attention bias terms, QK normalization, tied input/output
@@ -38,7 +38,8 @@ Besides the common `N, D, lr, gbsz, loss` (read directly from the raw file),
 - `seq_len` = 4,096 (the source's `SEQ_LENGTH` constant); independently
   confirmed by reconstructing the raw `train_tokens` column exactly as
   `iteration * gbsz * 4096` across all 890 rows.
-- `lr_schedule` = `"linear_decay"` for every run: the WSD decay phase is linear.
+- `vocab_size` = 50,000, fixed across every run (Sec. 1.1).
+- `lr_schedule` = `"warmup_stable_decay"` for every run: the WSD decay phase is linear.
 - `warmup_iters` = 2,000, fixed across every run (Sec. 1.1).
 - `decay_iters` = each run's own final step (`iteration`) minus
   `floor(iteration * 0.8)` -- the decay covers the final 20% of a run's own

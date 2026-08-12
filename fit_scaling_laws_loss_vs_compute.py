@@ -11,7 +11,7 @@ from scipy.optimize import curve_fit
 
 loss_key = 'loss'
 
-df = pd.read_csv('data/preprocessed/oellm_english.csv')
+df = pd.read_csv('data/oellm_english/preprocessed/oellm_english.csv')
 df.head()
 
 # Any duplicate runs

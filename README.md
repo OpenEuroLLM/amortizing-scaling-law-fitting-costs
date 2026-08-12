@@ -19,16 +19,16 @@ A standard scaling law study sweeps many combinations of model size `N`, dataset
 | `models.py` | Surrogate model backends: GP (BoTorch/GPyTorch), TabPFN, AutoGluon                                              |
 | `selection.py` | Training data selection strategies: random, local search                                                        |
 | `fit_scaling_laws_loss_vs_compute.py` | Standalone script using the original code from Niccolo for fitting and plotting a power law on the full dataset |
-| `preprocessing/fetch_data.py` | Downloads the raw CSV from each source repo into `data/raw/` |
-| `preprocessing/preprocess.py` | Adapts each raw CSV into the common `N, D, lr, gbsz, loss` schema in `data/preprocessed/` |
+| `preprocessing/fetch_data.py` | Downloads the raw CSV from each source repo into `data/<source>/raw/` |
+| `preprocessing/preprocess.py` | Adapts each raw CSV into the common `N, D, lr, gbsz, loss` schema in `data/<source>/preprocessed/` |
 
 ## Usage
 
 ### Data preprocessing
 
 ```bash
-uv run python preprocessing/fetch_data.py    # -> data/raw/<source>/...
-uv run python preprocessing/preprocess.py    # -> data/preprocessed/<source>.csv
+uv run python preprocessing/fetch_data.py    # -> data/<source>/raw/...
+uv run python preprocessing/preprocess.py    # -> data/<source>/preprocessed/<dataset>.csv
 ```
 
 `dense_english_scaling_results` and `dense_multilingual_models_scaling_results` are private OpenEuroLLM repos. So it needs your local git to already be able to authenticate to them. Request access first if you can't clone them yourself.
@@ -40,22 +40,9 @@ uv run python preprocessing/preprocess.py    # -> data/preprocessed/<source>.csv
 | `steplaw` | Li et al., arXiv:2503.04715 | yes |
 | `porian` | Porian et al., arXiv:2406.19146 | yes |
 | `gemstones` | McLeish et al., arXiv:2502.06857 | no |
-| `activesl_lr_bsz` | active-experiment-selection benchmark, arXiv:2604.22753 | yes |
-| `activesl_farseer` | active-experiment-selection benchmark, arXiv:2604.22753 | no |
-| `activesl_data_constrained` | active-experiment-selection benchmark, arXiv:2604.22753 | no |
 | `warmstart` | Mallik et al., arXiv:2605.13405 | yes |
 
-Sources with no `lr`/`gbsz` in the underlying data leave those columns blank -- usable with `fit_scaling_laws_loss_vs_compute.py` but not `model_based_fits.py`/`iterative_fits_L0_form.py`, which need all four features.
-
-5 sub-datasets from the active-experiment-selection benchmark (arXiv:2604.22753) aren't included, because their columns don't reduce to `N, D, lr, gbsz, loss` at all yet:
-
-| Sub-dataset | Why it's excluded |
-|---|---|
-| `domain_mixture_scaling_law` | 5 mixture-proportion features and 5 per-domain losses -- no `N`/`D` concept |
-| `moe_scaling_law` | `num_experts` + `dense_parameter_count` -- no `D`/`lr`/`gbsz` |
-| `parallel_scaling_law` | inference-time `parallel_size` -- no `D`/`lr`/`gbsz` |
-| `sparsity_scaling_law` | two separate `N`s (active/dense) and two `D`s |
-| `vocab_scaling_law` | `vocab_size` + `num_characters` in place of tokens, and an already vocab-normalized loss |
+Sources with no `lr`/`gbsz` in the underlying data leave those columns blank -- usable with `fit_scaling_laws_loss_vs_compute.py` but not `model_based_fits.py`/`iterative_fits_L0_form.py`, which need all four features. Conversely, a source having `lr`/`gbsz` columns doesn't by itself mean they were swept -- some sources fix `lr`/`gbsz` and only vary `N`/`D`, so the resulting dataset isn't necessarily usable for fitting an (lr, gbsz) scaling law; check the dataset's own README for whether it was actually varied.
 
 ### N-variant vocabulary
 
@@ -88,7 +75,7 @@ Results are written to `output_dir` as `results_{model_type}_{selection}_{num_po
 python fit_scaling_laws_loss_vs_compute.py
 ```
 
-Reads `data/preprocessed/oellm_english.csv`, fits a power law on the full loss envelope, and saves a plot to `results/fit_compute.png`.
+Reads `data/oellm_english/preprocessed/oellm_english.csv`, fits a power law on the full loss envelope, and saves a plot to `results/fit_compute.png`.
 
 ## Input data format
 

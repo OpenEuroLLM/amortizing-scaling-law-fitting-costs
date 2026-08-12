@@ -4,14 +4,16 @@ Mallik, Janowski, Hog et al., "When is Warmstarting Effective for Scaling
 Language Models?" ([arXiv:2605.13405](https://arxiv.org/abs/2605.13405)),
 repository at https://github.com/Neeratyoy/warmstarting_exps.
 
-Mallik et al. provide a collection of 170 decoder-only language-model
-training runs (14M-1.2B parameters, 8 layers, fixed 64-dim attention heads --
-Table 5) comparing three ways of initializing a *target* model of a given
-size: training it from scratch, or growing it in width from a smaller,
-already-trained *base* checkpoint via one of two warmstarting operators. All
-runs are trained on the SlimPajama corpus (Soboleva et al., 2023) using the
-open-source LitGPT implementation of a GPT-2-style architecture, for a fixed
-budget of 10, 20, or 30 tokens/parameter (Sec. 4.1.2).
+Mallik et al. provide a collection of decoder-only language-model
+architectures at 6 *target* sizes (32.3M-1.22B parameters, 8 layers, fixed
+64-dim attention heads -- Table 5; a 7th, smaller 14.6M architecture appears
+only as a *base* checkpoint, never as a target), comparing three ways of
+initializing a target model of a given size: training it from scratch, or
+growing it in width from a smaller, already-trained base checkpoint via one
+of two warmstarting operators. All runs are trained on the SlimPajama corpus
+(Soboleva et al., 2023) using the open-source LitGPT implementation of a
+GPT-2-style architecture, for a fixed budget of 10, 20, or 30 tokens/parameter
+(Sec. 4.1.2), for 170 training runs total.
 
 All runs share AdamW ((&beta;<sub>1</sub>, &beta;<sub>2</sub>) = (0.9, 0.95),
 &epsilon; = 1e-8), zero weight decay, a 1,024-token sequence length, and a
@@ -30,20 +32,19 @@ README (`EffingScaling/README.md`, "Warmstarting Data").
 
 ## The data
 
-| our dataset name | points | method |
-|---|---|---|
-| `warmstart_scratch_n33` | 33 | Training the target model from a random initialization, with &mu;P-transferred hyperparameters (raw `method="mup"`) -- the paper's `Scratch` baseline. |
-| `warmstart_net2net_n27` | 27 | Growing the target model from the base checkpoint via Net2Net (Chen et al., 2016; Appendix G) -- a function-preserving width-expansion baseline. |
-| `warmstart_szp_n110` | 110 | Growing the target model from the base checkpoint via Shrink-Zeros-Perturb (SZP, Sec. 3.2, Eq. 2) -- the paper's own architecture-agnostic warmstarting method, and its main object of study. Raw `warmstart_type="snp_zeros_with_mup"`. |
+| our dataset name | n_points | model size range (n sizes) | token budget range (n budgets) | what differentiates it |
+|---|---|---|---|---|
+| `warmstart_scratch` | 33 | 32.3M-1.22B (6 sizes) | 323M-18.3B (16 budgets) | Training the target model from a random initialization, with &mu;P-transferred hyperparameters (raw `method="mup"`) -- the paper's `Scratch` baseline. |
+| `warmstart_net2net` | 27 | 32.3M-287M (4 sizes) | 323M-8.61B (12 budgets) | Growing the target model from the base checkpoint via Net2Net (Chen et al., 2016; Appendix G) -- a function-preserving width-expansion baseline. |
+| `warmstart_szp` | 110 | 32.3M-1.22B (6 sizes) | 323M-18.3B (20 budgets) | Growing the target model from the base checkpoint via Shrink-Zeros-Perturb (SZP, Sec. 3.2, Eq. 2) -- the paper's own architecture-agnostic warmstarting method, and its main object of study. Raw `warmstart_type="snp_zeros_with_mup"`. |
 
 ### Naming convention
 
 ```
-warmstart_{method}_n{rows}
+warmstart_{method}
 ```
 - `{method}` = which of the 3 initialization techniques above, from the
   raw `method` column.
-- `n{rows}` = row count of the resulting CSV.
 
 ## Columns
 
@@ -51,13 +52,14 @@ Besides the common `N, D, lr, gbsz, loss`, `--extended` adds:
 
 - `N` = the raw `target_N` (the post-growth size actually trained and
   evaluated; equal to the from-scratch model size for `warmstart_scratch`).
-  Confirmed as each architecture's exact total parameter count: reconstructing
-  it from `width`/`depth` as `12*depth*width**2 + 101482*width` (attention
+  Each architecture's exact total parameter count: reconstructing it from
+  `width`/`depth` as `12*depth*width**2 + 101482*width` (attention
   `4*width**2` plus a 4x-ratio MLP `8*width**2`, no bias terms) matches all 6
-  architectures in Table 5 to the exact integer. The paper doesn't state a
-  vocabulary size or whether embeddings are tied, so the `101482*width`
-  remainder (embedding/head/positional parameters) can't be split further,
-  and `N_definition` is recorded as `"N_total"` rather than one of the more
+  architectures in Table 5 to the exact integer -- `adapt_warmstart` asserts
+  this on every preprocessing run. The paper doesn't state a vocabulary size
+  or whether embeddings are tied, so the `101482*width` remainder
+  (embedding/head/positional parameters) can't be split further, and
+  `N_definition` is recorded as `"N_total"` rather than one of the more
   specific variants.
 - `D` = the raw `tokens` column at the run's last checkpoint with a logged
   `Validation Loss` (a couple of runs are missing their true final eval, so
@@ -71,9 +73,10 @@ Besides the common `N, D, lr, gbsz, loss`, `--extended` adds:
 - `seq_len` = the raw `block_size`, renamed; 1,024 for every run (Table 5).
 - `tied_embeddings` = left unset (see `N` above).
 - `N_definition` = `"N_total"` for every run (see `N` above).
-- `lr_schedule` = `"linear_decay"` for every run -- the warmup-stable-decay
-  schedule's cooldown phase is linear (Appendix D.2's
-  &eta;<sub>t</sub> = &eta;<sub>max</sub>(T-t)/(dT)).
+- `lr_schedule` = `"warmup_stable_decay"` for every run -- the cooldown phase
+  is linear (Appendix D.2's &eta;<sub>t</sub> = &eta;<sub>max</sub>(T-t)/(dT)),
+  and is derived from each run's own actual step count rather than a nominal
+  target, so it's complete by construction even for early-stopped runs.
 - `warmup_iters`/`decay_iters` = the raw `warmup_fraction`/`cooldown_fraction`
   (fixed at 0.01/0.2 for every run) times the run's own total step count
   (`D / (seq_len * gbsz)`), rounded to the nearest integer.

@@ -4,14 +4,14 @@ OpenEuroLLM, dense multilingual (Qwen3-architecture) scaling results,
 repository at
 https://github.com/OpenEuroLLM/dense_multilingual_models_scaling_results.
 
-The repository provides a collection of 329 training runs across 4 dense
-Qwen3-architecture sizes (0.21B-1.26B total/`N_Porian` parameters, repo-root
-`README.md`), pretrained on a multilingual data mix up to 300BT, with
-intermediate checkpoints decayed at D = 6, 12, 20, 30, 50, 80, 120, 200,
-300 BT. Each (N, D) pair uses a sparse "1 center + 4 cross" hyperparameter
-design (one run at the center (lr, gbsz), plus one-at-a-time lr/gbsz
-neighbors) rather than a full grid (`scaling_laws/README.md`). The grid is 
-further expanded.
+The repository provides a collection of dense Qwen3-architecture models at 4
+sizes (0.21B-1.26B total/`N_Porian` parameters, repo-root `README.md`),
+pretrained on a multilingual data mix up to 300BT, with intermediate
+checkpoints decayed at 9 token budgets (D = 6, 12, 20, 30, 50, 80, 120, 200,
+300 BT), for 329 training runs total. Each (N, D) pair uses a sparse "1
+center + 4 cross" hyperparameter design (one run at the center (lr, gbsz),
+plus one-at-a-time lr/gbsz neighbors) rather than a full grid
+(`scaling_laws/README.md`). The grid is further expanded.
 
 All runs share a 4,096-token sequence length and tied input/output
 embeddings (`untie_embeddings_and_output_weights: False`), and a
@@ -37,7 +37,7 @@ Besides the common `N, D, lr, gbsz, loss` (`N` read from the raw
 - `tied_embeddings` = `True` for every run (repo-root `README.md`).
 - `seq_len` = 4,096 (`scaling_laws/preprocess_decay.py`'s `SEQ_LEN` /
   `hp_selection/utils.py`'s `compute_checkpoint_iter`).
-- `lr_schedule` = `"linear_decay"` for every run: the WSD decay phase is linear.
+- `lr_schedule` = `"warmup_stable_decay"` for every run: the WSD decay phase is linear.
 - `warmup_iters` = 2,000, fixed across every run.
 - `decay_iters` = each run's own final step (`iteration`) minus
   `floor(iteration * 0.8)` -- the decay covers the final 20% of a run's own

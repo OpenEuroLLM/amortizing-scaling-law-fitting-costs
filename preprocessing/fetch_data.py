@@ -9,7 +9,7 @@ import tempfile
 import urllib.request
 from pathlib import Path
 
-RAW_DIR = Path(__file__).parent.parent / "data" / "raw"
+DATA_DIR = Path(__file__).parent.parent / "data"
 
 GIT_SOURCES = {
     # TODO: add a link to the tech report once it's published.
@@ -46,32 +46,11 @@ URL_SOURCES = {
     },
 }
 
-# Sources fetched as multiple files sharing a base URL, downloaded into one
-# raw dir (preprocess.py then adapts each file separately or concatenates
-# them, depending on the source -- see ADAPTERS there).
 SPLIT_URL_SOURCES = {
-    # HuggingFace-style train/test parquet splits, from the benchmark suite of
-    # "Spend Less, Fit Better: Budget-Efficient Scaling Law Fitting via Active
-    # Experiment Selection" (arXiv:2604.22753). Only the sub-datasets whose
-    # columns map onto N/D/lr/gbsz/loss (or a subset of it) are included here
-    # -- other sub-datasets are excluded because their columns don't fit the 
-    # pattern at the moment.
-    "activesl_lr_bsz": {
-        "base_url": "https://raw.githubusercontent.com/PlanarG/active-sl/main/benchmark/dataset/lr_bsz_scaling_law",
-        "filenames": ["train-00000-of-00001.parquet", "test-00000-of-00001.parquet"],
-    },
-    "activesl_farseer": {
-        "base_url": "https://raw.githubusercontent.com/PlanarG/active-sl/main/benchmark/dataset/farseer_scaling_law",
-        "filenames": ["train-00000-of-00001.parquet", "test-00000-of-00001.parquet"],
-    },
-    "activesl_data_constrained": {
-        "base_url": "https://raw.githubusercontent.com/PlanarG/active-sl/main/benchmark/dataset/data_constrained_scaling_law",
-        "filenames": ["train-00000-of-00001.parquet", "test-00000-of-00001.parquet"],
-    },
     # McLeish et al., "Gemstones: A Model Suite for Multi-Faceted Scaling
-    # Laws", arXiv:2502.06857. Each file is a distinct dataset variant (token
-    # range / checkpoint density / LR schedule), adapted separately in
-    # preprocess.py -- see data/raw/gemstones/README.md for what each one is.
+    # Laws", arXiv:2502.06857. Each file corresponds to a distinct scaling
+    # experiment, adapted separately in preprocess.py -- see
+    # data/gemstones/README.md for what each one is.
     "gemstones": {
         "base_url": "https://raw.githubusercontent.com/mcleish7/gemstone-scaling-laws/main/wandb_dfs",
         "filenames": [
@@ -96,7 +75,7 @@ SPLIT_URL_SOURCES = {
 
 
 def fetch_git(name: str, repo: str, paths: list) -> Path:
-    dest_dir = RAW_DIR / name
+    dest_dir = DATA_DIR / name / "raw"
     dest_dir.mkdir(parents=True, exist_ok=True)
 
     with tempfile.TemporaryDirectory() as tmp:
@@ -116,14 +95,14 @@ def fetch_git(name: str, repo: str, paths: list) -> Path:
 
 
 def fetch_url(name: str, url: str, filename: str) -> Path:
-    dest = RAW_DIR / name / filename
+    dest = DATA_DIR / name / "raw" / filename
     dest.parent.mkdir(parents=True, exist_ok=True)
     urllib.request.urlretrieve(url, dest)
     return dest
 
 
 def fetch_split(name: str, base_url: str, filenames: list) -> Path:
-    dest_dir = RAW_DIR / name
+    dest_dir = DATA_DIR / name / "raw"
     dest_dir.mkdir(parents=True, exist_ok=True)
     for filename in filenames:
         urllib.request.urlretrieve(f"{base_url}/{filename}", dest_dir / filename)

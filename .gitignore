@@ -5,26 +5,9 @@
 
 
 data/*
-!data/raw/
-data/raw/*
-!data/raw/gemstones/
-data/raw/gemstones/*
-!data/raw/gemstones/README.md
-!data/raw/steplaw/
-data/raw/steplaw/*
-!data/raw/steplaw/README.md
-!data/raw/porian/
-data/raw/porian/*
-!data/raw/porian/README.md
-!data/raw/oellm_english/
-data/raw/oellm_english/*
-!data/raw/oellm_english/README.md
-!data/raw/oellm_multilingual/
-data/raw/oellm_multilingual/*
-!data/raw/oellm_multilingual/README.md
-!data/raw/warmstart/
-data/raw/warmstart/*
-!data/raw/warmstart/README.md
+!data/*/
+data/*/*
+!data/*/README.md
 output*/
 results/
 
