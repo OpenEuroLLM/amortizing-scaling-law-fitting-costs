@@ -18,7 +18,6 @@ __pycache__/
 surrogate_venv
 .venv/
 
-diagrams/
 NOTES.md
 METHOD.md
 
