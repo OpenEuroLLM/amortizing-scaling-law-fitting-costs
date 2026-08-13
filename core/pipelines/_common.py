@@ -187,14 +187,15 @@ def run_acquisition(args, form, gp_features, train_df, global_best_params, fit_g
         # fit the surrogate on observations (log-features), predict the unacquired rest.
         # model-free (NullSurrogate) predicts NaN everywhere, so the dropna below leaves only
         # the observed points -- a fit-on-observations baseline, with no branch here.
-        pred_y, heldout_mse, _ = build_surrogate(
+        pred_y, heldout_mse, _model = build_surrogate(
             np.log(observations[gp_features].to_numpy()),
             observations[GRID_TARGET].to_numpy()[:, None],
             np.log(train_df.loc[remaining_idx, gp_features].to_numpy()),
             test_y=train_df.loc[remaining_idx, GRID_TARGET].to_numpy(),
             model_type=args.model_type,
+            # mean_form=...,
             use_mean_model=True if args.gp_mean_as_l0 else False,
-            diagnose=args.diagnose_gp
+            # kernel=...,
         )
         # true loss where observed, predicted loss elsewhere, then fit the mixed data.
         # NaN predictions (model-free) drop out, leaving the observed-only fit.
