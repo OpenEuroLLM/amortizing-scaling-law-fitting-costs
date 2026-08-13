@@ -19,6 +19,7 @@ from scaling.utils import get_pareto_frontier
 from core import GRID_TARGET, MAX_ITERS
 from core.selection import SELECTION
 from core.surrogates import MODELS, build_surrogate
+from core.surrogates.gp import KERNEL_NAMES, MEAN_FORM_NAMES
 from core.fitting import build_fit, print_fit_results  # noqa: F401  (re-exported for pipelines)
 from core.utils.data import next_batch_compute, resolve_grid_features, FEATURE_SETS
 
@@ -95,9 +96,19 @@ def add_acquisition_args(parser):
     parser.add_argument('--filename', default="history")
     parser.add_argument('--plot_figure', action='store_true')
     parser.add_argument(
-        '--gp_mean_as_l0', action='store_true',
-        help="If set, the GP mean function is initialized with the previous iteration's best-fit L0. "
-        "If not set, the GP mean is a constant function (default)."
+        '--gp_kernel', type=str, default='matern', choices=list(KERNEL_NAMES),
+        help="GP covariance kernel: 'matern' (Matern-5/2 with ARD, default), 'linear', "
+        "'linear+matern', or 'linear_nd+matern_hp' (linear on N,D + Matern on the HP dims)."
+    )
+    parser.add_argument(
+        '--gp_mean_form', type=str, default=None, choices=list(MEAN_FORM_NAMES),
+        help="Parametric form used as the GP mean, fitted during MLL optimization "
+        "(keys mirror --form). If unset, the GP mean is a constant function (default)."
+    )
+    parser.add_argument(
+        '--gp_mean_warmstart', action='store_true',
+        help="Initialize the GP mean with the best parametric fit seen so far "
+        "(lowest in-data fit loss). Only relevant when --gp_mean_form is set."
     )
     parser.add_argument(
         '--diagnose_gp', action='store_true',
@@ -154,6 +165,15 @@ def run_acquisition(args, form, gp_features, train_df, global_best_params, fit_g
     df_pred = None
     interp_names = list(form.interpretable(global_best_params).keys())
     incumbents = {name: np.inf for name in interp_names}
+    # incumbent parametric fit (lowest in-data fit loss), used to warm-start the GP mean
+    _best_fit_loss, _best_fit_params = np.inf, None
+
+    def _gp_kwargs():
+        mk = {}
+        if args.gp_mean_warmstart and _best_fit_params is not None:
+            mk["init_params"] = _best_fit_params
+        return dict(kernel=args.gp_kernel, mean_form=args.gp_mean_form,
+                    mean_kwargs=mk, diagnose=args.diagnose_gp)
     for iter_idx in range(args.init_points, n_iters + 1):
         # budget checks
         if args.C_budget is not None and total_compute_spent >= args.C_budget:
@@ -172,7 +192,7 @@ def run_acquisition(args, form, gp_features, train_df, global_best_params, fit_g
         if getattr(splitter, "needs_surrogate", False) and len(acquired_idx) >= 2:
             _obs = train_df.loc[acquired_idx]
             try:
-                sel_surrogate = MODELS[args.model_type]()
+                sel_surrogate = MODELS[args.model_type](**_gp_kwargs())
                 sel_surrogate.fit(np.log(_obs[gp_features].to_numpy()), _obs[y_target].to_numpy()[:, None])
             except Exception as e:
                 # GP fit can raise NotPSDError: the kernel matrix is ill-conditioned (no inverse --
@@ -203,9 +223,7 @@ def run_acquisition(args, form, gp_features, train_df, global_best_params, fit_g
             np.log(train_df.loc[remaining_idx, gp_features].to_numpy()),
             test_y=train_df.loc[remaining_idx, y_target].to_numpy(),
             model_type=args.model_type,
-            # mean_form=...,
-            use_mean_model=True if args.gp_mean_as_l0 else False,
-            # kernel=...,
+            **_gp_kwargs(),
         )
         # true loss where observed, predicted loss elsewhere, then fit the mixed data.
         # NaN predictions (model-free) drop out, leaving the observed-only fit.
@@ -213,6 +231,8 @@ def run_acquisition(args, form, gp_features, train_df, global_best_params, fit_g
         df_pred.loc[remaining_idx, y_target] = pred_y
         df_pred = df_pred.dropna(subset=[y_target])
         best_params, best_loss = fit_grid(df_pred)
+        if best_loss < _best_fit_loss:  # incumbent by in-data fit loss, for GP mean warm-start
+            _best_fit_loss, _best_fit_params = best_loss, best_params
         print(f"#Iteration {iter_idx} on {observations.shape[0]} points: Fitting loss={best_loss:2.2e}", end="; ")
         print_fit_results(form, best_params)
 
@@ -283,7 +303,7 @@ def plot_regret_panels(flat_axes, start_idx, history_df, form, interp_names):
             ax.plot(history_df["iter"], np.minimum.accumulate(history_df[col]))
             ax.set_yscale("log")
             ax.set_title(f"incumbent regret {name}")
-        ax.set_xlabel("iteration")
+        ax.set_xlabel("Samples")
         idx += 1
     return idx
 

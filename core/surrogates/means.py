@@ -1,5 +1,6 @@
 from typing import List
 
+import numpy as np
 import torch
 import gpytorch
 from gpytorch.constraints import Interval
@@ -62,7 +63,7 @@ class ScalingLawMean_L0_form(_ConstrainedMean):
     ):
         super().__init__()  # log L0, log A, b
         if bounds is None and use_bounds:
-            from parametric_forms import PARAMETRIC_FORMS
+            from ..forms import PARAMETRIC_FORMS
             bounds = PARAMETRIC_FORMS["L0"].bounds
         bounds = bounds or [None] * len(self.PARAM_NAMES)
         # registering to ensure they are optimized during MLL training
@@ -107,7 +108,7 @@ class ScalingLawMean_chin3_form(_ConstrainedMean):
     ):
         super().__init__()  # log A, alpha, log B, beta, log E
         if bounds is None and use_bounds:
-            from parametric_forms import PARAMETRIC_FORMS
+            from ..forms import PARAMETRIC_FORMS
             bounds = PARAMETRIC_FORMS["chinchilla3"].bounds
         bounds = bounds or [None] * len(self.PARAM_NAMES)
         # registering to ensure they are optimized during MLL training

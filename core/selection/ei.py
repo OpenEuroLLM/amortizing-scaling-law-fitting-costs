@@ -23,7 +23,7 @@ class EISelection(DataSelection):
     def __init__(self, seed: int):
         self.seed = seed
         self.rng = np.random.RandomState(seed)
-        from acquisition import ExpectedImprovement
+        from .acquisition import ExpectedImprovement
         self.acq = ExpectedImprovement()
 
     def split(self, df_fit, n_points):
@@ -54,7 +54,7 @@ class EIPerCostSelection(EISelection):
 
     def __init__(self, seed: int):
         super().__init__(seed)
-        from acquisition import ExpectedImprovementPerCost
+        from .acquisition import ExpectedImprovementPerCost
         self.acq = ExpectedImprovementPerCost()
 
     def next_point(

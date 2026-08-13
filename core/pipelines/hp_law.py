@@ -156,7 +156,8 @@ def _plot(args, form, history_df, interp_names, df_pred, test_opt,
     ax = flat_axes[panel_idx]; panel_idx += 1
     ax.plot(history_df["iter"], history_df["law_mse_pool"], "-o", ms=3, color="#0072B2", label="pool (in-region)")
     ax.plot(history_df["iter"], history_df["law_mse_held_out"], "--s", ms=3, color="#D55E00", label="held-out")
-    ax.set_yscale("log"); ax.set_xlabel("iteration")
+    ax.set_yscale("log"); 
+    ax.set_xlabel("Samples")
     ax.set_title(f"optimal-{target} log-MSE"); ax.legend(fontsize=9)
 
     # optimal HP vs the primary scale axis: final-iteration optima, fitted curve, held-out point
