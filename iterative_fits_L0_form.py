@@ -7,7 +7,7 @@ from pathlib import Path
 
 from scaling.utils import fit_parametric_form, get_pareto_frontier
 
-from models import GPModel, MEAN_FORM_NAMES
+from models import GPModel, MEAN_FORM_NAMES, KERNEL_NAMES
 from selection import RandomSelection, LocalSearch, MaxVarianceSelection, FarthestPointSelection
 from parametric_forms import PARAMETRIC_FORMS
 
@@ -202,6 +202,10 @@ def get_args():
         "If unset, the GP mean is a constant function (default)."
     )
     parser.add_argument(
+        '--gp_kernel', type=str, default='matern', choices=list(KERNEL_NAMES),
+        help="GP covariance kernel: 'matern' (Matern-5/2 with ARD, default) or 'linear'."
+    )
+    parser.add_argument(
         '--gp_mean_warmstart', action='store_true',
         help="Initialize the GP mean with the best parametric fit seen so far "
         "(lowest in-data fit loss). Only relevant when --gp_mean_form is set."
@@ -250,6 +254,7 @@ if __name__ == "__main__":
         np.log(test_df_known[INPUT_X].to_numpy()),
         model_type=args.model_type,
         mean_form=args.gp_mean_form,
+        kernel=args.gp_kernel,
         diagnose=args.diagnose_gp,
     )
     print("Fitting parametric form on the global surrogate...")
@@ -341,6 +346,7 @@ if __name__ == "__main__":
                 test_y=train_df.loc[remaining_idx, OUTPUT_Y].to_numpy(),
                 model_type=args.model_type,
                 mean_form=args.gp_mean_form,
+                kernel=args.gp_kernel,
                 mean_kwargs=(
                     {"init_params": _best_fit_params}
                     if args.gp_mean_warmstart and _best_fit_params is not None else {}

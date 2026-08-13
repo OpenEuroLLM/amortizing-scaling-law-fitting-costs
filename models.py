@@ -9,6 +9,12 @@ from typing import List
 # `parametric_forms.PARAMETRIC_FORMS`; validated against the real registry in fit().
 MEAN_FORM_NAMES: tuple[str, ...] = ("L0", "chinchilla3")
 
+# Kernel choices for GPModel; "matern" is the current default (Matern-5/2 with ARD).
+KERNEL_NAMES: tuple[str, ...] = (
+    "matern", "linear", "linear+matern",
+    "linear_nd+matern_hp",   # additive: linear on (N,D) + Matern on hyperparams
+)
+
 
 class SurrogateModel(ABC):
     @abstractmethod
@@ -31,6 +37,41 @@ class GPModel(SurrogateModel):
         self.mean_form = None
         if "mean_form" in kwargs:
             self.mean_form = kwargs["mean_form"]
+        self.kernel = kwargs.get("kernel", None) or "matern"
+
+    def _build_kernel(self, n_dims: int):
+        import gpytorch
+
+        # Whole-input kernels (all dims share one kernel family, ARD per dim).
+        if self.kernel == "matern":
+            return gpytorch.kernels.MaternKernel(ard_num_dims=n_dims)
+        if self.kernel == "linear":
+            return gpytorch.kernels.LinearKernel(ard_num_dims=n_dims)
+        if self.kernel == "linear+matern":
+            return (
+                gpytorch.kernels.LinearKernel(ard_num_dims=n_dims)
+                + gpytorch.kernels.MaternKernel(ard_num_dims=n_dims)
+            )
+
+        # Grouped additive kernel: a linear kernel on the scale dims (N=0, D=1) plus a
+        # Matern kernel on the remaining hyperparameter dims (2..n_dims-1). active_dims
+        # scopes each kernel to its own columns.
+        if self.kernel == "linear_nd+matern_hp":
+            scale_dims = [0, 1]
+            hp_dims = list(range(2, n_dims))
+            if not hp_dims:
+                raise ValueError(
+                    f"kernel '{self.kernel}' needs >2 input dims (got n_dims={n_dims})."
+                )
+            k_scale = gpytorch.kernels.LinearKernel(
+                ard_num_dims=len(scale_dims), active_dims=scale_dims
+            )
+            k_hp = gpytorch.kernels.MaternKernel(
+                ard_num_dims=len(hp_dims), active_dims=hp_dims
+            )
+            return k_scale + k_hp
+
+        raise ValueError(f"Unsupported kernel: {self.kernel}. Choose from {list(KERNEL_NAMES)}.")
 
     def fit(self, train_x: np.ndarray, train_y: np.ndarray, max_attempts: int = 10, **kwargs) -> None:
         # lazy import to avoid requiring gpytorch/botorch unless GPModel is used
@@ -50,7 +91,7 @@ class GPModel(SurrogateModel):
                 if self.mean_form is not None else None
             ),
             outcome_transform=None,
-            covar_module=gpytorch.kernels.MaternKernel(ard_num_dims=train_x.shape[1]),
+            covar_module=self._build_kernel(train_x.shape[1]),
         )
         mll = gpytorch.mlls.ExactMarginalLogLikelihood(self._gp.likelihood, self._gp)
         botorch.fit_gpytorch_mll(mll, max_attempts=max_attempts)
