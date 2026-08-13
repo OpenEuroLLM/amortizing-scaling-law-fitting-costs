@@ -18,9 +18,16 @@ GIT_SOURCES = {
         "paths": ["data/preprocessed/all_points_clean.csv"],
     },
     # TODO: add a link to the tech report once it's published.
+    # Upstream renamed decay_points_clean.csv -> preprocessed/decay/<version>/clean/<name>/clean.csv
+    # (see scaling_laws/README.md "Versioning"). Pin the current decay clean export.
     "oellm_multilingual": {
         "repo": "https://github.com/OpenEuroLLM/dense_multilingual_models_scaling_results.git",
-        "paths": ["scaling_laws/data/preprocessed/decay_points_clean.csv"],
+        "paths": [
+            (
+                "scaling_laws/data/preprocessed/decay/55b513a/clean/v1/clean.csv",
+                "decay_points_clean.csv",
+            ),
+        ],
     },
     # Li et al., "Predictable Scale: Part I, Step Law -- Optimal Hyperparameter
     # Scaling Law in Large Language Model Pretraining", arXiv:2503.04715.
@@ -74,9 +81,21 @@ SPLIT_URL_SOURCES = {
 }
 
 
+def _normalize_git_paths(paths: list) -> list[tuple[str, str]]:
+    normalized = []
+    for entry in paths:
+        if isinstance(entry, tuple):
+            src, dest = entry
+        else:
+            src, dest = entry, Path(entry).name
+        normalized.append((src, dest))
+    return normalized
+
+
 def fetch_git(name: str, repo: str, paths: list) -> Path:
     dest_dir = DATA_DIR / name / "raw"
     dest_dir.mkdir(parents=True, exist_ok=True)
+    paths = _normalize_git_paths(paths)
 
     with tempfile.TemporaryDirectory() as tmp:
         subprocess.run(
@@ -85,11 +104,11 @@ def fetch_git(name: str, repo: str, paths: list) -> Path:
         )
         subprocess.run(
             ["git", "-C", tmp, "sparse-checkout", "set"]
-            + [str(Path(path).parent) for path in paths],
+            + [str(Path(src).parent) for src, _ in paths],
             check=True,
         )
-        for path in paths:
-            shutil.copyfile(Path(tmp) / path, dest_dir / Path(path).name)
+        for src, dest in paths:
+            shutil.copyfile(Path(tmp) / src, dest_dir / dest)
 
     return dest_dir
 
