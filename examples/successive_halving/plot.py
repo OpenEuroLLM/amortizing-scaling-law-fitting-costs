@@ -17,7 +17,7 @@ import numpy as np
 REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO))                      # for `selection`, `models`
 sys.path.insert(0, str(Path(__file__).resolve().parent))   # for sibling modules
-from selection import SuccessiveHalving
+from core.selection import SuccessiveHalving
 from fit_eval import evaluate
 from surrogate import gp_surrogate
 from synth_lc import loss_at_compute, sample_models, true_frontier

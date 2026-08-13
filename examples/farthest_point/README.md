@@ -8,7 +8,7 @@ variance; `farthest_point` is pure geometry.
 
 ## How it plugs in
 
-The driver (`iterative_fits_L0_form.py`) passes the observed set to `next_point`, which returns the
+The driver (`main.py`) passes the observed set to `next_point`, which returns the
 candidate with the largest nearest-observed distance. The GP is still fit each iteration for the
 **law recovery** (grid infill) — only the *pick* differs from `random`. No GP is used for the
 selection itself.
@@ -16,7 +16,7 @@ selection itself.
 | file | change |
 |---|---|
 | `selection.py` | `FarthestPointSelection` — `next_point` returns the max-min-distance candidate; bootstraps with random before anything is observed. |
-| `iterative_fits_L0_form.py` | registers `"farthest_point"`; passes `acquired_idx` to `next_point`. |
+| `main.py` | registers `"farthest_point"`; passes `acquired_idx` to `next_point`. |
 
 `random`/`local_search` are untouched (their `next_point` ignores the extra `acquired_idx` kwarg).
 
@@ -24,7 +24,7 @@ selection itself.
 
 ```bash
 # through the canonical driver
-uv run python iterative_fits_L0_form.py \
+uv run python main.py \
     --input data/steplaw_clean.csv --output_dir results/ \
     --seed 0 --niters 24 --init_points 10 --selection farthest_point
 

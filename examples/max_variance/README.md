@@ -6,7 +6,7 @@ uniform random draw. Classic active-learning / uncertainty sampling.
 
 ## How it plugs in
 
-The driver (`iterative_fits_L0_form.py`) already fits a GP surrogate every iteration to infill the
+The driver (`main.py`) already fits a GP surrogate every iteration to infill the
 grid before fitting `L(C)`. `max_variance` reuses that same GP: the driver fits it on the current
 observations **before** selection and hands it to `next_point`, which returns the pool point of
 maximum posterior std. So it's the *same loop as `random`* — only the pick changes.
@@ -15,7 +15,7 @@ maximum posterior std. So it's the *same loop as `random`* — only the pick cha
 |---|---|
 | `models.py` | `GPModel.predict(X, return_std=True)` — expose posterior std. |
 | `selection.py` | `MaxVarianceSelection` — `next_point` returns the max-std candidate; `needs_surrogate = True`. Falls back to random until a GP is available (bootstrap). |
-| `iterative_fits_L0_form.py` | registers `"max_variance"`; fits the selection GP before `next_point` and passes it in (only for `needs_surrogate` strategies). |
+| `main.py` | registers `"max_variance"`; fits the selection GP before `next_point` and passes it in (only for `needs_surrogate` strategies). |
 
 `random` and `local_search` are untouched (their `next_point` ignores the extra `surrogate` kwarg).
 
@@ -23,7 +23,7 @@ maximum posterior std. So it's the *same loop as `random`* — only the pick cha
 
 ```bash
 # through the canonical driver
-uv run python iterative_fits_L0_form.py \
+uv run python main.py \
     --input data/steplaw_clean.csv --output_dir results/ \
     --seed 0 --niters 24 --init_points 10 --selection max_variance
 
