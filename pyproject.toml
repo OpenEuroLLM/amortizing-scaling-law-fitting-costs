@@ -22,10 +22,16 @@ gp = [
     "gpytorch>=1.15.2",
     "torch>=2.13.0",
 ]
+dev = [
+    "pytest>=8.0",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
 
 [tool.uv.workspace]
 members = [
-    "EffingScaling",
+    "submodules/EffingScaling",
 ]
 
 [tool.uv.sources]

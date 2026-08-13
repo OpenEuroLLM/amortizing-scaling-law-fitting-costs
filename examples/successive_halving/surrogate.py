@@ -12,7 +12,7 @@ import sys
 import numpy as np
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
-from models import GPModel
+from core.surrogates import GPModel
 
 
 def gp_surrogate(obs_points, model_Ns, C_target):

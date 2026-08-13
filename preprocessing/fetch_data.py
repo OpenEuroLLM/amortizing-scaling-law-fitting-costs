@@ -9,28 +9,31 @@ import tempfile
 import urllib.request
 from pathlib import Path
 
-RAW_DIR = Path(__file__).parent.parent / "data" / "raw"
+DATA_DIR = Path(__file__).parent.parent / "data"
 
 GIT_SOURCES = {
-
+    # TODO: add a link to the tech report once it's published.
     "oellm_english": {
         "repo": "https://github.com/OpenEuroLLM/dense_english_scaling_results.git",
-        "path": "data/preprocessed/all_points_clean.csv",
+        "paths": ["data/preprocessed/all_points_clean.csv"],
     },
-    
+    # TODO: add a link to the tech report once it's published.
+    # Upstream renamed decay_points_clean.csv -> preprocessed/decay/<version>/clean/<name>/clean.csv
+    # (see scaling_laws/README.md "Versioning"). Pin the current decay clean export.
     "oellm_multilingual": {
         "repo": "https://github.com/OpenEuroLLM/dense_multilingual_models_scaling_results.git",
-        "path": "scaling_laws/data/preprocessed/decay_points_clean.csv",
+        "paths": [
+            (
+                "scaling_laws/data/preprocessed/decay/55b513a/clean/v1/clean.csv",
+                "decay_points_clean.csv",
+            ),
+        ],
     },
     # Li et al., "Predictable Scale: Part I, Step Law -- Optimal Hyperparameter
     # Scaling Law in Large Language Model Pretraining", arXiv:2503.04715.
-    "steplaw_dense": {
+    "steplaw": {
         "repo": "https://github.com/step-law/steplaw.git",
-        "path": "data/dense_lr_bs_loss.csv",
-    },
-    "steplaw_moe": {
-        "repo": "https://github.com/step-law/steplaw.git",
-        "path": "data/moe_lr_bs_loss.csv",
+        "paths": ["data/dense_lr_bs_loss.csv", "data/moe_lr_bs_loss.csv"],
     },
 }
 
@@ -41,33 +44,20 @@ URL_SOURCES = {
         "url": "https://raw.githubusercontent.com/formll/resolving-scaling-law-discrepancies/main/data/experiment_results.pickle.xz",
         "filename": "experiment_results.pickle.xz",
     },
+    # Mallik et al., "When is Warmstarting Effective for Scaling Language
+    # Models?", arXiv:2605.13405. Drive link the authors share for the raw
+    # data in a sibling project's: EffingScaling/README.md; "Warmstarting Data".
+    "warmstart": {
+        "url": "https://drive.google.com/uc?export=download&id=1vr5Jq1TpTpnkb5CX5mcu2wWQQzbf-bmd",
+        "filename": "warmstart_runs_flattened.parquet",
+    },
 }
 
-# Sources fetched as multiple files sharing a base URL, downloaded into one
-# raw dir (preprocess.py then adapts each file separately or concatenates
-# them, depending on the source -- see ADAPTERS there).
 SPLIT_URL_SOURCES = {
-    # HuggingFace-style train/test parquet splits, from the benchmark suite of
-    # "Spend Less, Fit Better: Budget-Efficient Scaling Law Fitting via Active
-    # Experiment Selection" (arXiv:2604.22753). Only the sub-datasets whose
-    # columns map onto N/D/lr/gbsz/loss (or a subset of it) are included here
-    # -- other sub-datasets are excluded because their columns don't fit.
-    "activesl_lr_bsz": {
-        "base_url": "https://raw.githubusercontent.com/PlanarG/active-sl/main/benchmark/dataset/lr_bsz_scaling_law",
-        "filenames": ["train-00000-of-00001.parquet", "test-00000-of-00001.parquet"],
-    },
-    "activesl_farseer": {
-        "base_url": "https://raw.githubusercontent.com/PlanarG/active-sl/main/benchmark/dataset/farseer_scaling_law",
-        "filenames": ["train-00000-of-00001.parquet", "test-00000-of-00001.parquet"],
-    },
-    "activesl_data_constrained": {
-        "base_url": "https://raw.githubusercontent.com/PlanarG/active-sl/main/benchmark/dataset/data_constrained_scaling_law",
-        "filenames": ["train-00000-of-00001.parquet", "test-00000-of-00001.parquet"],
-    },
     # McLeish et al., "Gemstones: A Model Suite for Multi-Faceted Scaling
-    # Laws", arXiv:2502.06857. Each file is a distinct dataset variant (token
-    # range / checkpoint density / LR schedule), adapted separately in
-    # preprocess.py -- see data/raw/gemstones/README.md for what each one is.
+    # Laws", arXiv:2502.06857. Each file corresponds to a distinct scaling
+    # experiment, adapted separately in preprocess.py -- see
+    # data/gemstones/README.md for what each one is.
     "gemstones": {
         "base_url": "https://raw.githubusercontent.com/mcleish7/gemstone-scaling-laws/main/wandb_dfs",
         "filenames": [
@@ -91,9 +81,21 @@ SPLIT_URL_SOURCES = {
 }
 
 
-def fetch_git(name: str, repo: str, path: str) -> Path:
-    dest = RAW_DIR / name / Path(path).name
-    dest.parent.mkdir(parents=True, exist_ok=True)
+def _normalize_git_paths(paths: list) -> list[tuple[str, str]]:
+    normalized = []
+    for entry in paths:
+        if isinstance(entry, tuple):
+            src, dest = entry
+        else:
+            src, dest = entry, Path(entry).name
+        normalized.append((src, dest))
+    return normalized
+
+
+def fetch_git(name: str, repo: str, paths: list) -> Path:
+    dest_dir = DATA_DIR / name / "raw"
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    paths = _normalize_git_paths(paths)
 
     with tempfile.TemporaryDirectory() as tmp:
         subprocess.run(
@@ -101,23 +103,25 @@ def fetch_git(name: str, repo: str, path: str) -> Path:
             check=True,
         )
         subprocess.run(
-            ["git", "-C", tmp, "sparse-checkout", "set", str(Path(path).parent)],
+            ["git", "-C", tmp, "sparse-checkout", "set"]
+            + [str(Path(src).parent) for src, _ in paths],
             check=True,
         )
-        shutil.copyfile(Path(tmp) / path, dest)
+        for src, dest in paths:
+            shutil.copyfile(Path(tmp) / src, dest_dir / dest)
 
-    return dest
+    return dest_dir
 
 
 def fetch_url(name: str, url: str, filename: str) -> Path:
-    dest = RAW_DIR / name / filename
+    dest = DATA_DIR / name / "raw" / filename
     dest.parent.mkdir(parents=True, exist_ok=True)
     urllib.request.urlretrieve(url, dest)
     return dest
 
 
 def fetch_split(name: str, base_url: str, filenames: list) -> Path:
-    dest_dir = RAW_DIR / name
+    dest_dir = DATA_DIR / name / "raw"
     dest_dir.mkdir(parents=True, exist_ok=True)
     for filename in filenames:
         urllib.request.urlretrieve(f"{base_url}/{filename}", dest_dir / filename)
@@ -126,7 +130,7 @@ def fetch_split(name: str, base_url: str, filenames: list) -> Path:
 
 def main():
     for name, cfg in GIT_SOURCES.items():
-        dest = fetch_git(name, cfg["repo"], cfg["path"])
+        dest = fetch_git(name, cfg["repo"], cfg["paths"])
         print(f"{name}: fetched -> {dest}")
     for name, cfg in URL_SOURCES.items():
         dest = fetch_url(name, cfg["url"], cfg["filename"])
