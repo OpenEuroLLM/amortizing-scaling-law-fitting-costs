@@ -76,7 +76,7 @@ class GPModel(SurrogateModel):
     def fit(self, train_x: np.ndarray, train_y: np.ndarray, max_attempts: int = 10, **kwargs) -> None:
         # lazy import to avoid requiring gpytorch/botorch unless GPModel is used
         import botorch, gpytorch, torch
-        from mean_functions import MEAN_FORMS
+        from .means import MEAN_FORMS
 
         if self.mean_form is not None and self.mean_form not in MEAN_FORMS:
             raise ValueError(

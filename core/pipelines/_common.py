@@ -73,11 +73,20 @@ def add_acquisition_args(parser):
     parser.add_argument('--selection', type=str, default='random', choices=list(SELECTION))
     parser.add_argument(
         '--feature_set', type=str, default='default', choices=list(FEATURE_SETS),
-        help="Which features the GP conditions on. 'default': N, D, lr, gbsz. 'arch': + the "
+        help="Which features the GP/Model conditions on. 'default': N, D, lr, gbsz. 'arch': + the "
         "architectural HPs (width, depth, ffn, num_heads). 'data': + the data-axis HPs "
         "(unique_tokens, seq_len). 'full': + both. Auto-narrowed to columns present and "
         "non-constant, so absent/all-null/fixed knobs drop out (extra modes collapse to default)."
     )
+    parser.add_argument(
+        "--hp_list", type=str, nargs="+", default=None,
+        help="Extra HP columns to be union-ed of the `feature_set` for the model."
+    )
+    parser.add_argument(
+        '--y_target', type=str, default=GRID_TARGET,
+        help=f"Column the model learns, or the dependent variable. Default '{GRID_TARGET}'."
+    )
+
     parser.add_argument('--input', type=str, required=True)
     parser.add_argument('--output_dir', type=str, required=True)
     parser.add_argument(
@@ -103,10 +112,10 @@ def prepare_data(args):
     hp_law by the form's scale axis).
     """
     df = pd.read_csv(args.input)
-    gp_features = resolve_grid_features(df, args.feature_set)
+    gp_features = resolve_grid_features(df, args.feature_set, args.hp_list)
     if not gp_features:
         raise ValueError(f"No usable GP features resolved from {args.input} for --feature_set {args.feature_set}.")
-    df = df.dropna(subset=gp_features + [GRID_TARGET])
+    df = df.dropna(subset=gp_features + [args.y_target])
     print(f"GP features ({args.feature_set}): {gp_features}")
     return df, gp_features
 
@@ -139,6 +148,7 @@ def run_acquisition(args, form, gp_features, train_df, global_best_params, fit_g
     acquired_idx = pd.Index(rng.choice(pool.index, args.init_points, replace=False))
     init_points_idx = acquired_idx.copy()
     total_compute_spent = train_df.loc[acquired_idx, "C"].sum()
+    y_target = args.y_target
 
     history = []
     df_pred = None
@@ -163,7 +173,7 @@ def run_acquisition(args, form, gp_features, train_df, global_best_params, fit_g
             _obs = train_df.loc[acquired_idx]
             try:
                 sel_surrogate = MODELS[args.model_type]()
-                sel_surrogate.fit(np.log(_obs[gp_features].to_numpy()), _obs[GRID_TARGET].to_numpy()[:, None])
+                sel_surrogate.fit(np.log(_obs[gp_features].to_numpy()), _obs[y_target].to_numpy()[:, None])
             except Exception as e:
                 # GP fit can raise NotPSDError: the kernel matrix is ill-conditioned (no inverse --
                 # a kernel must be positive-definite), which happens with few / near-duplicate points.
@@ -189,9 +199,9 @@ def run_acquisition(args, form, gp_features, train_df, global_best_params, fit_g
         # the observed points -- a fit-on-observations baseline, with no branch here.
         pred_y, heldout_mse, _model = build_surrogate(
             np.log(observations[gp_features].to_numpy()),
-            observations[GRID_TARGET].to_numpy()[:, None],
+            observations[y_target].to_numpy()[:, None],
             np.log(train_df.loc[remaining_idx, gp_features].to_numpy()),
-            test_y=train_df.loc[remaining_idx, GRID_TARGET].to_numpy(),
+            test_y=train_df.loc[remaining_idx, y_target].to_numpy(),
             model_type=args.model_type,
             # mean_form=...,
             use_mean_model=True if args.gp_mean_as_l0 else False,
@@ -200,8 +210,8 @@ def run_acquisition(args, form, gp_features, train_df, global_best_params, fit_g
         # true loss where observed, predicted loss elsewhere, then fit the mixed data.
         # NaN predictions (model-free) drop out, leaving the observed-only fit.
         df_pred = train_df.copy()
-        df_pred.loc[remaining_idx, GRID_TARGET] = pred_y
-        df_pred = df_pred.dropna(subset=[GRID_TARGET])
+        df_pred.loc[remaining_idx, y_target] = pred_y
+        df_pred = df_pred.dropna(subset=[y_target])
         best_params, best_loss = fit_grid(df_pred)
         print(f"#Iteration {iter_idx} on {observations.shape[0]} points: Fitting loss={best_loss:2.2e}", end="; ")
         print_fit_results(form, best_params)
