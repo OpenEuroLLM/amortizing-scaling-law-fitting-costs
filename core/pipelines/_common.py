@@ -193,9 +193,9 @@ def run_acquisition(args, form, gp_features, train_df, global_best_params, fit_g
             np.log(train_df.loc[remaining_idx, gp_features].to_numpy()),
             test_y=train_df.loc[remaining_idx, GRID_TARGET].to_numpy(),
             model_type=args.model_type,
-            mean_form=...,
-            # use_mean_model=True if args.gp_mean_as_l0 else False,
-            kernel=...,
+            # mean_form=...,
+            use_mean_model=True if args.gp_mean_as_l0 else False,
+            # kernel=...,
         )
         # true loss where observed, predicted loss elsewhere, then fit the mixed data.
         # NaN predictions (model-free) drop out, leaving the observed-only fit.

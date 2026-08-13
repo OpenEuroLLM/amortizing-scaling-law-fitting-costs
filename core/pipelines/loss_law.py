@@ -90,9 +90,9 @@ def run(args):
         _global_df[GRID_TARGET].to_numpy()[:, None],
         np.log(held_out_df[gp_features].to_numpy()),
         model_type=args.model_type,
-        mean_form=...,
-        # use_mean_model=True if args.gp_mean_as_l0 else False,
-        kernel=...,
+        # mean_form=...,
+        use_mean_model=True if args.gp_mean_as_l0 else False,
+        # kernel=...,
         diagnose=args.diagnose_gp,
     )
     print(f"Fitting parametric form on all of the data {_global_df.shape}...")
