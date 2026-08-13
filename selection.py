@@ -500,7 +500,6 @@ class EISelection(DataSelection):
         X = np.log(df.loc[candidate_set, FEATURES].to_numpy(float))
         mu, sigma = surrogate.predict(X, return_std=True)
         scores = self.acq.score(mu, sigma, incumbent)
-        print(scores)
         return int(candidate_set[int(np.argmax(scores))])
 
 
@@ -526,11 +525,11 @@ class EIPerCostSelection(EISelection):
         if surrogate is None or acquired_idx is None or len(acquired_idx) == 0:
             return int(self.rng.choice(candidate_set))     # bootstrap
         incumbent = float(df.loc[acquired_idx, TARGET].min())
-        X = np.log(df.loc[candidate_set, FEATURES].to_numpy(float))
+        # X = np.log(df.loc[candidate_set, FEATURES].to_numpy(float))
+        X = df.loc[candidate_set, FEATURES].to_numpy(float)
         mu, sigma = surrogate.predict(X, return_std=True)
         cost = df.loc[candidate_set, "C"].to_numpy(float)
         scores = self.acq.score(mu, sigma, incumbent, cost=cost)
-        print(scores)
         return int(candidate_set[int(np.argmax(scores))])
 
 

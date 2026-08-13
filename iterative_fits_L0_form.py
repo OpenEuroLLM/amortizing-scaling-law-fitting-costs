@@ -240,7 +240,7 @@ if __name__ == "__main__":
 
     # preprocess data
     train_df, test_df_known, test_df_unknown = data_preprocess(
-        df, held_out_type=args.held_out_type, held_out_C_lower=args.held_out_C_lower
+        df, held_out_type=args.held_out_type, held_out_C_lower=args.held_out_C_lower, C_extrapolation_len=2
     )
 
     form = PARAMETRIC_FORMS[args.form]
@@ -520,15 +520,25 @@ if __name__ == "__main__":
         # pareto from the observations + GP-predicted rest (fantasized)
         fant_pareto = get_pareto_frontier(df_pred, x_name="C", y_name="loss")
         fant_idx = set(fant_pareto.index)  # indices of fantasized pareto points
+        global_pareto = get_pareto_frontier(_global_df, x_name="C", y_name="loss")
+        global_idx = set(global_pareto.index)  # indices of global pareto points
         labels = [
+            "global frontier",
+            "    global points in observed set",
+            "    global points in fantasized set",
             "observed-only frontier", 
             "fantasized frontier", 
             "    from observed points", 
             "    from GP predictions"
         ]
         width = max(len(label) for label in labels)
-        print(f"{labels[0]:<{width}} : {len(obs_pareto)} points")
-        print(f"{labels[1]:<{width}} : {len(fant_pareto)} points")
-        print(f"{labels[2]:<{width}} : {len(fant_idx & acq)} points")
-        print(f"{labels[3]:<{width}} : {len(fant_idx - acq)} points")
+        print(f"{'-'*width} : {'-'*10}")
+        print(f"{labels[0]:<{width}} : {len(global_idx)} points")
+        print(f"{labels[1]:<{width}} : {len(global_idx & acq)} points")
+        print(f"{labels[2]:<{width}} : {len(global_idx & fant_idx)} points")
+        print(f"{'-'*width} : {'-'*10}")
+        print(f"{labels[3]:<{width}} : {len(obs_pareto)} points")
+        print(f"{labels[4]:<{width}} : {len(fant_pareto)} points")
+        print(f"{labels[5]:<{width}} : {len(fant_idx & acq)} points")
+        print(f"{labels[6]:<{width}} : {len(fant_idx - acq)} points")
 # end of file

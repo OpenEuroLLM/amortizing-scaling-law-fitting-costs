@@ -115,7 +115,6 @@ class GPModel(SurrogateModel):
 
         self._gp.eval()
 
-
     def predict(self, X_test: np.ndarray, return_std: bool = False):
         import torch
 
