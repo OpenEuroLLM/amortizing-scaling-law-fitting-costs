@@ -8,8 +8,7 @@ from pathlib import Path
 
 import pandas as pd
 
-RAW_DIR = Path(__file__).parent.parent / "data" / "raw"
-OUT_DIR = Path(__file__).parent.parent / "data" / "preprocessed"
+DATA_DIR = Path(__file__).parent.parent / "data"
 
 COLUMNS = ["N", "D", "lr", "gbsz", "loss"]
 
@@ -37,16 +36,78 @@ PORIAN_PARAM_LOOKUP_M = {
 PORIAN_N_VARIANTS = ["N_Porian", "N_exact", "N_eff", "N_Kaplan"]
 
 
+# Table 1 ("Model architectures"), Sec. 1.1 of Ajroldi, "Scaling of
+# OpenEuroLLM Dense English Models" (see data/oellm_english/README.md),
+# keyed by exact N (non-embedding parameter count -- matches Table 1's "Total
+# parameters" row exactly, and is independently reconstructed by
+# vocab_size(50,000) * width == the embedding-matrix size subtracted out in
+# scripts/preprocess.ipynb's model_sizes dict, for all 5 sizes). The raw
+# file's held-out 1.7B rows aren't in Table 1, so are left without an
+# architecture (None).
+OELLM_ENGLISH_ARCH = {
+    47_557_632: {"width": 384, "depth": 12, "num_heads": 6, "ffn": 1536},
+    124_455_168: {"width": 576, "depth": 18, "num_heads": 9, "ffn": 2304},
+    301_880_320: {"width": 896, "depth": 20, "num_heads": 14, "ffn": 3584},
+    588_544_000: {"width": 1280, "depth": 20, "num_heads": 20, "ffn": 5120},
+    983_138_304: {"width": 1536, "depth": 24, "num_heads": 24, "ffn": 6144},
+}
+
+
 def adapt_oellm_english(df: pd.DataFrame) -> pd.DataFrame:
-    return df[COLUMNS]
+    df = df.copy()
+    arch = df["N"].map(OELLM_ENGLISH_ARCH)
+    for key in ("width", "depth", "num_heads", "ffn"):
+        df[key] = arch.apply(lambda a, key=key: a[key] if isinstance(a, dict) else None)
+    df["tied_embeddings"] = True  # Sec. 1.1: "tied input/output embeddings"
+    df["seq_len"] = 4096  # scripts/preprocess.ipynb SEQ_LENGTH; reconstructs train_tokens exactly
+    df["vocab_size"] = 50_000  # Sec. 1.1: "50,000-token vocabulary"
+    df["N_definition"] = "N_ne"
+    df["warmup_iters"] = 2000  # fixed across all runs (Sec. 1.1 / scripts/clean.ipynb)
+    df["lr_schedule"] = "warmup_stable_decay"  # WSD decay phase is linear (confirmed)
+    # decay covers the final 20% of each run's own steps (Sec. 3, "WSD
+    # Analysis"); `iteration` is the run's final step, matching
+    # scripts/preprocess.ipynb's own branching-checkpoint formula
+    # (floor(iteration * 0.8)).
+    decay_start = (df["iteration"] * 0.8).apply(math.floor)
+    df["decay_iters"] = df["iteration"] - decay_start
+    df["min_lr"] = 1e-5  # Sec. 3: decay always anneals to a fixed floor lr of 1e-5
+    return df[
+        COLUMNS
+        + ["width", "depth", "tied_embeddings", "seq_len", "vocab_size", "N_definition"]
+        + ["lr_schedule", "warmup_iters", "decay_iters", "min_lr"]
+        + ["num_heads", "ffn", "beta2", "seed"]
+    ]
 
 
 def adapt_oellm_multilingual(df: pd.DataFrame) -> pd.DataFrame:
-    # N is ambiguous in this source (N_ne_*, N_total_*, N_Porian_*); using the
-    # Porian et al. convention -- this choice (and D/lr/gbsz) has not been
-    # verified against the source's intent.
-    df = df.rename(columns={"N_Porian_exact": "N"})
-    return df[COLUMNS]
+    # N defaults to N_Porian_exact, matching this source's own repo-root
+    # README.md ("N_Porian" convention) and its utils.py (N_Porian_exact ==
+    # N_total_exact here, since all runs use tied embeddings); N_ne/N_total
+    # are kept as their own columns too, using the project's N-variant names
+    # (README.md's "N-variant vocabulary") -- this source's own README
+    # confirms N_ne/N_total/N_Porian match those definitions directly.
+    df = df.rename(columns={
+        "N_Porian_exact": "N",
+        "N_ne_exact": "N_ne",
+        "N_total_exact": "N_total",
+    })
+    df["tied_embeddings"] = True  # repo README: untie_embeddings_and_output_weights: False
+    df["seq_len"] = 4096  # preprocess_decay.py SEQ_LEN / hp_selection/utils.py compute_checkpoint_iter
+    df["N_definition"] = "N_Porian"
+    df["lr_schedule"] = "warmup_stable_decay"  # WSD decay phase is linear (confirmed)
+    df["warmup_iters"] = 2000  # fixed across all runs (confirmed)
+    # decay covers the final 20% of each run's own steps (hp_selection/utils.py
+    # compute_checkpoint_iter's decay_fraction=0.2, "constant across the whole
+    # multilingual_scaling model family"); `iteration` is the run's final step
+    # (decay_points_clean.csv already filters to iteration == expected_iters).
+    decay_start = (df["iteration"] * 0.8).apply(math.floor)
+    df["decay_iters"] = df["iteration"] - decay_start
+    df["min_lr"] = 0  # decay floor (confirmed)
+    return df[
+        COLUMNS
+        + ["N_ne", "N_total", "tied_embeddings", "seq_len", "N_definition"]
+        + ["lr_schedule", "warmup_iters", "decay_iters", "min_lr"]
+    ]
 
 
 def adapt_steplaw_dense(df: pd.DataFrame) -> pd.DataFrame:
@@ -59,7 +120,7 @@ def adapt_steplaw_dense(df: pd.DataFrame) -> pd.DataFrame:
     })
     df["seq_len"] = 2048
     df["warmup_iters"] = 2000
-    df["lr_schedule"] = "cosine decay"
+    df["lr_schedule"] = "cosine_decay"
     df["N_definition"] = "N_ne"
     return df[
         COLUMNS
@@ -80,7 +141,7 @@ def adapt_steplaw_moe(df: pd.DataFrame) -> pd.DataFrame:
         "Na": "N_active",
     })
     df["warmup_iters"] = 2000
-    df["lr_schedule"] = "cosine decay"
+    df["lr_schedule"] = "cosine_decay"
     df["N_definition"] = "N_ne"
     return df[
         COLUMNS
@@ -89,7 +150,14 @@ def adapt_steplaw_moe(df: pd.DataFrame) -> pd.DataFrame:
     ]
 
 
-def adapt_porian(df: pd.DataFrame) -> pd.DataFrame:
+def adapt_porian(df: pd.DataFrame, hparams: str, dataset: str, decay: str | None = None) -> pd.DataFrame:
+    # The raw file bundles runs from several experiments; each output dataset
+    # filters to one (hparams, dataset, decay) combination -- see
+    # data/porian/README.md.
+    mask = (df["hparams"] == hparams) & (df["dataset"] == dataset)
+    if decay is not None:
+        mask &= df["decay"] == decay
+    df = df[mask]
     df = df.rename(columns={"bs": "gbsz"})
     df["loss"] = df["val/loss"].apply(lambda s: s.iloc[-1])
     df["D"] = df["seq_len"] * df["gbsz"] * df["max_step"]
@@ -102,7 +170,75 @@ def adapt_porian(df: pd.DataFrame) -> pd.DataFrame:
     # --input; N_exact/N_eff/N_Kaplan stay available as their own columns
     # until the fitting scripts support choosing a variant.
     df["N"] = df["N_Porian"]
-    return df[COLUMNS + ["N_Porian", "N_exact", "N_eff", "N_Kaplan"]]
+    # warmup_iters: warmup_tokens (raw) converted to steps at this run's own
+    # seq_len/gbsz.
+    df["warmup_iters"] = (df["warmup_tokens"] / (df["seq_len"] * df["gbsz"])).apply(math.ceil)
+    # decay_iters/min_lr: derived per raw "decay" value, verified against
+    # the raw per-step "train/lr" curves. "const" (Sec. 3.5) holds the LR
+    # flat after warmup -- no decay, so decay_iters/min_lr don't apply
+    # (None, as for gemstones' non-decaying rows). "chinchilla" (Sec. 3.4)
+    # cosine-decays from the end of warmup to exactly 1% of peak lr at the
+    # run's own max_step -- confirmed across the whole chinchilla set:
+    # floor/peak converges to ~0.01 right at max_step regardless of
+    # max_step's value, so decay_iters = max_step - warmup_iters and
+    # min_lr = 0.01 * lr. "kaplan" (Sec. 3.1) cosine-decays to exactly 0 at
+    # a fixed token target (2.5e5 * 2**19 ~= 131B tokens) shared by every
+    # kaplan run regardless of model size -- confirmed by reproducing each
+    # run's logged floor value from a cosine formula using that shared
+    # target (matches to 6 decimal places across all 64 rows).
+    kaplan_decay_end_tokens = 2.5e5 * 2**19
+    df["decay_iters"] = float("nan")
+    df["min_lr"] = float("nan")
+    is_chinchilla = df["decay"] == "chinchilla"
+    if is_chinchilla.any():
+        df.loc[is_chinchilla, "decay_iters"] = (
+            df.loc[is_chinchilla, "max_step"] - df.loc[is_chinchilla, "warmup_iters"]
+        )
+        df.loc[is_chinchilla, "min_lr"] = 0.01 * df.loc[is_chinchilla, "lr"]
+    is_kaplan = df["decay"] == "kaplan"
+    if is_kaplan.any():
+        df.loc[is_kaplan, "decay_iters"] = (
+            (kaplan_decay_end_tokens - df.loc[is_kaplan, "warmup_tokens"])
+            / (df.loc[is_kaplan, "seq_len"] * df.loc[is_kaplan, "gbsz"])
+        ).apply(math.ceil)
+        df.loc[is_kaplan, "min_lr"] = 0.0
+    df["lr_schedule"] = df["decay"].map({"const": "warmup_stable", "chinchilla": "cosine_decay", "kaplan": "cosine_decay"})
+    # tied_embeddings: not a raw column, so reconstruct N_exact as N_Kaplan
+    # (non-embedding params) + one vocab_size*width embedding matrix (raw
+    # `vocab_size` is constant at 50,432) and check it against the lookup
+    # table -- two matrices (untied) would overshoot N_exact by 8-94% instead.
+    reconstructed_n_exact = df["N_Kaplan"] + df["vocab_size"] * df["width"]
+    assert ((reconstructed_n_exact - df["N_exact"]).abs() / df["N_exact"] < 0.005).all(), (
+        "tied-embeddings reconstruction of N_exact no longer matches PORIAN_PARAM_LOOKUP_M"
+    )
+    df["tied_embeddings"] = True
+    return df[
+        COLUMNS
+        + ["N_Porian", "N_exact", "N_eff", "N_Kaplan"]
+        + ["width", "depth", "seq_len", "vocab_size", "lr_schedule", "decay_iters", "min_lr", "warmup_iters", "seed"]
+        + ["tied_embeddings"]
+    ]
+
+
+# porian_{purpose}_{schedule}_{dataset} -- see data/porian/README.md for what
+# each part means (and for each dataset's row count). Maps to (raw "hparams"
+# value, raw "dataset" value, raw "decay" value or None to skip that filter).
+PORIAN_RAW_DIR = "porian"
+PORIAN_VARIANTS = {
+    "porian_main_stable_rw": ("sweep", "rw", None),
+    "porian_chinchilla_cosine_decay_rw": ("base", "rw", "chinchilla"),
+    "porian_chinchilla_cosine_decay_owt2": ("base", "owt2", "chinchilla"),
+    "porian_kaplan_cosine_decay_rw": ("base", "rw", "kaplan"),
+    "porian_kaplan_cosine_decay_owt2": ("base", "owt2", "kaplan"),
+    "porian_seed_stable_rw": ("seed", "rw", None),
+    "porian_seed_stable_owt2": ("seed", "owt2", None),
+    "porian_tuned_stable_rw": ("tuned", "rw", None),
+    "porian_tuned_stable_owt2": ("tuned", "owt2", None),
+}
+
+
+def _porian_adapter(hparams: str, dataset: str, decay: str | None):
+    return partial(adapt_porian, hparams=hparams, dataset=dataset, decay=decay)
 
 
 def adapt_gemstones(
@@ -132,7 +268,7 @@ def adapt_gemstones(
         else:
             df["decay_iters"] = None
         df["tied_embeddings"] = False  # Appendix A
-        # N = params_active_precise = N_total see data/raw/gemstones/README.md).
+        # N = params_active_precise = N_total see data/gemstones/README.md).
         df["N_definition"] = "N_total"
     else:
         df["width"] = None
@@ -152,85 +288,107 @@ def adapt_gemstones(
 
 
 # Name mapping conventions for the Gemstones datasets.
-# gemstone_{stable|decay|external}[_token range]_n{checkpoint rows}[_axis],
-# where "stable" = constant LR schedule, "decay" = loss after the LR is
-# linearly annealed to 0, and "external" = data pulled from Epoch AI's
-# Chinchilla replication, redistributed by the paper's repo for comparison
-# (not a Gemstones run). [_axis] is a trailing qualifier -- "lrablation"
-# (half-LR sweep), "512width" (width=512 only), "predecay" (pre-branch
-# checkpoint), "sampled_like_chinchilla" (downsampled to Chinchilla's (N, D)
-# density) -- see data/raw/gemstones/README.md for more info.
+# gemstone_{stable|decay|external}[_token range][_dense][_axis], where
+# "stable" = constant LR schedule, "decay" = loss after the LR is linearly
+# annealed to 0, and "external" = data pulled from Epoch AI's Chinchilla
+# replication, redistributed by the paper's repo for comparison (not a
+# Gemstones run). "_dense" marks the 5x-denser checkpoint variant of a token
+# range that also has a base (non-dense) variant. [_axis] is a trailing
+# qualifier -- "lrablation" (half-LR sweep), "512width" (width=512 only),
+# "predecay" (pre-branch checkpoint), "sampled_like_chinchilla" (downsampled
+# to Chinchilla's (N, D) density) -- see data/gemstones/README.md for more
+# info, including each dataset's row count.
 GEMSTONE_RAW_DIR = "gemstones"
 GEMSTONE_VARIANTS = {
-    "gemstone_stable_100b_n220": "wandb_df_for_fitting_hot.jsonl",
-    "gemstone_stable_100b_n1100": "wandb_df_for_fitting_hot_477.jsonl",
-    "gemstone_stable_350b_n770": "wandb_df_for_fitting_hot_100b+.jsonl",
-    "gemstone_stable_350b_n3850": "wandb_df_for_fitting_hot_100b+_477.jsonl",
-    "gemstone_stable_120to350b_n528": "wandb_df_for_fitting_hot_120b+_only.jsonl",
-    "gemstone_stable_120to350b_n2552": "wandb_df_for_fitting_hot_120b+_only_477.jsonl",
-    "gemstone_stable_350b_n175_512width": "wandb_df_for_fitting_hot_100b+_512x.jsonl",
-    "gemstone_stable_100b_n199_predecay": "wandb_df_for_fitting_cool_begin.jsonl",
-    "gemstone_decay_11to110b_n199": "wandb_df_for_fitting_cool_end.jsonl",
-    "gemstone_stable_100b_n200_lrablation": "wandb_df_for_fitting_lr_ablation_hot.jsonl",
-    "gemstone_stable_100b_n1000_lrablation": "wandb_df_for_fitting_lr_ablation_hot_477.jsonl",
-    "gemstone_stable_n24_sampled_like_chinchilla": "wandb_df_for_fitting_hot_sampled_like_chinchilla.jsonl",
-    "gemstone_stable_n23_lrablation_sampled_like_chinchilla": "wandb_df_for_fitting_lr_ablation_hot_sampled_like_chinchilla.jsonl",
-    "gemstone_external_chinchilla_n28": "wandb_df_for_fitting_slim_chinchilla.jsonl",
-    "gemstone_external_chinchilla_n27_lrablation": "wandb_df_for_fitting_lr_ablation_slim_chinchilla.jsonl",
+    "gemstone_stable_100b": "wandb_df_for_fitting_hot.jsonl",
+    "gemstone_stable_100b_dense": "wandb_df_for_fitting_hot_477.jsonl",
+    "gemstone_stable_350b": "wandb_df_for_fitting_hot_100b+.jsonl",
+    "gemstone_stable_350b_dense": "wandb_df_for_fitting_hot_100b+_477.jsonl",
+    "gemstone_stable_120to350b": "wandb_df_for_fitting_hot_120b+_only.jsonl",
+    "gemstone_stable_120to350b_dense": "wandb_df_for_fitting_hot_120b+_only_477.jsonl",
+    "gemstone_stable_350b_512width": "wandb_df_for_fitting_hot_100b+_512x.jsonl",
+    "gemstone_stable_100b_predecay": "wandb_df_for_fitting_cool_begin.jsonl",
+    "gemstone_decay_11to110b": "wandb_df_for_fitting_cool_end.jsonl",
+    "gemstone_stable_100b_lrablation": "wandb_df_for_fitting_lr_ablation_hot.jsonl",
+    "gemstone_stable_100b_dense_lrablation": "wandb_df_for_fitting_lr_ablation_hot_477.jsonl",
+    "gemstone_stable_sampled_like_chinchilla": "wandb_df_for_fitting_hot_sampled_like_chinchilla.jsonl",
+    "gemstone_stable_lrablation_sampled_like_chinchilla": "wandb_df_for_fitting_lr_ablation_hot_sampled_like_chinchilla.jsonl",
+    "gemstone_external_chinchilla": "wandb_df_for_fitting_slim_chinchilla.jsonl",
+    "gemstone_external_chinchilla_lrablation": "wandb_df_for_fitting_lr_ablation_slim_chinchilla.jsonl",
 }
 
 
-def adapt_activesl_lr_bsz(df: pd.DataFrame) -> pd.DataFrame:
-    # From the "lr_bsz_scaling_law" config of the active-sl benchmark (arXiv:2604.22753).
-    # "group" is always "all_data" in this config -- not informative, dropped.
-    df = df.rename(columns={
-        "bsz": "gbsz",
-        "data_size": "D",
-        "non_embedding_param_size": "N",
-        "lm_loss": "loss",
-    })
-    return df[COLUMNS]
-
-
-def adapt_activesl_farseer(df: pd.DataFrame) -> pd.DataFrame:
-    # From the "farseer_scaling_law" config of the active-sl benchmark. Already
-    # N/D/loss; no lr/gbsz in this config.
-    df["lr"] = None
-    df["gbsz"] = None
-    return df[COLUMNS]
-
-
-def adapt_activesl_data_constrained(df: pd.DataFrame) -> pd.DataFrame:
-    # From the "data_constrained_scaling_law" config of the active-sl benchmark.
-    # No lr/gbsz. "unique_tokens" (distinct, non-repeated tokens; D can exceed
-    # it when a run repeats data for multiple epochs) has no slot in the
-    # common schema, so it's kept as an extra column.
-    df = df.rename(columns={"params": "N", "tokens": "D"})
-    df["lr"] = None
-    df["gbsz"] = None
-    return df[COLUMNS + ["unique_tokens"]]
-
-
-def adapt_warmstart(df: pd.DataFrame) -> pd.DataFrame:
-    # Per-step logs (one row per eval, ~2.4M rows); collapsed to one row per
-    # run -- identified by its `post_hoc_df` output path -- using the last
-    # checkpoint that has a logged Validation Loss (a couple of runs are
-    # missing their final eval, so this isn't always literally the last step).
-    # N is `target_N`, the post-growth size actually being evaluated;
-    # `base_N` (the pre-growth size the run warmstarted from), `shrink`,
-    # `warmstart_type`, and `method` are kept as extra columns since they
-    # identify the warmstarting technique, not something the common schema
-    # has a slot for.
+def adapt_warmstart(df: pd.DataFrame, method: str) -> pd.DataFrame:
+    # Per-step logs (~2.5M rows), one row per eval. `post_hoc_df` is each
+    # run's own output-file path, so grouping by it and keeping the row with
+    # the largest `tokens` that has a logged `Validation Loss` gives that
+    # run's final validation loss (a couple of runs are missing their true
+    # final eval, so this isn't always literally the last step; some raw
+    # rows have no `post_hoc_df`/`Validation Loss` at all -- groupby drops
+    # them by default).
+    #
+    # The raw `method` column bundles 3 initialization techniques compared
+    # on the same (N, D) grid: "mup" (Scratch, muP-transferred
+    # hyperparameters, no inherited weights), "net2net" (Net2Net growth),
+    # "paws" (the paper's Shrink-Zeros-Perturb/SZP method, Eq. 2 of
+    # arXiv:2605.13405). Each has a different loss(N, D) surface, so each
+    # gets its own output dataset (WARMSTART_VARIANTS below).
+    #
+    # N = target_N (the post-growth size evaluated); `base_N` (the
+    # pre-growth size warmstarted from -- also the scale the run's
+    # muP-transferred hyperparameters came from) is kept as an extra column.
     df = df.dropna(subset=["Validation Loss"]).sort_values("tokens")
     df = df.groupby("post_hoc_df", as_index=False).tail(1)
+    df = df[df["method"] == method]
     df = df.rename(columns={
         "target_N": "N",
         "tokens": "D",
         "max_lr": "lr",
         "Validation Loss": "loss",
+        "n_embd": "width",
+        "n_layer": "depth",
+        "block_size": "seq_len",
     })
     df["gbsz"] = df["micro_batch_size"] * df["accumulation_iters"] * df["devices"]
-    return df[COLUMNS + ["base_N", "shrink", "warmstart_type", "method"]]
+    # N (target_N) matches width/depth exactly via
+    # 12*depth*width**2 + 101482*width (attention 4*width**2 + a 4x-ratio MLP
+    # 8*width**2, no bias) across all 6 architectures in the paper's Table 5.
+    # The 101482*width remainder mixes embedding/head/positional params the
+    # paper doesn't break down, so tied_embeddings remains unknown.
+    reconstructed_n = 12 * df["depth"] * df["width"] ** 2 + 101_482 * df["width"]
+    assert (reconstructed_n == df["N"]).all(), (
+        "N no longer matches 12*depth*width**2 + 101482*width -- check width/depth against Table 5"
+    )
+    df["N_definition"] = "N_total"
+    df["tied_embeddings"] = None
+    # Appendix D.2: warmup-stable-decay with a linear cooldown to 0, warmup/
+    # cooldown fixed at 1%/20% of each run's own total steps -- derived from
+    # each run's own actual step count (not a nominal target), so the decay
+    # phase is complete by construction even for early-stopped runs.
+    df["lr_schedule"] = "warmup_stable_decay"
+    total_steps = df["D"] / (df["seq_len"] * df["gbsz"])
+    df["warmup_iters"] = (df["warmup_fraction"] * total_steps).apply(round)
+    df["decay_iters"] = (df["cooldown_fraction"] * total_steps).apply(round)
+    return df[
+        COLUMNS
+        + ["width", "depth", "tied_embeddings", "seq_len", "N_definition"]
+        + ["lr_schedule", "warmup_iters", "decay_iters", "min_lr"]
+        + ["base_N"]
+    ]
+
+
+# warmstart_{method} -- see data/warmstart/README.md for what each part
+# means and each dataset's row count.
+WARMSTART_RAW_DIR = "warmstart"
+WARMSTART_VARIANTS = {
+    "warmstart_scratch": "mup",
+    "warmstart_net2net": "net2net",
+    "warmstart_szp": "paws",
+}
+
+
+def _warmstart_adapter(method: str):
+    return partial(adapt_warmstart, method=method)
 
 
 # Picks lr_base/decay_phase/is_gemstones_run for a GEMSTONE_VARIANTS name.
@@ -252,8 +410,8 @@ def _gemstone_adapter(name: str):
 
 
 STEPLAW_RAW_DIRS = {
-    "steplaw_dense_n1911": "steplaw_dense",
-    "steplaw_moe_n708": "steplaw_moe",
+    "steplaw_dense": "steplaw",
+    "steplaw_moe": "steplaw",
 }
 
 # name -> (adapter, raw filename(s), file format). filename(s) is a list for
@@ -262,31 +420,20 @@ STEPLAW_RAW_DIRS = {
 ADAPTERS = {
     "oellm_english": (adapt_oellm_english, "all_points_clean.csv", "csv"),
     "oellm_multilingual": (adapt_oellm_multilingual, "decay_points_clean.csv", "csv"),
-    "steplaw_dense_n1911": (adapt_steplaw_dense, "dense_lr_bs_loss.csv", "csv"),
-    "steplaw_moe_n708": (adapt_steplaw_moe, "moe_lr_bs_loss.csv", "csv"),
-    "porian": (adapt_porian, "experiment_results.pickle.xz", "pickle"),
+    "steplaw_dense": (adapt_steplaw_dense, "dense_lr_bs_loss.csv", "csv"),
+    "steplaw_moe": (adapt_steplaw_moe, "moe_lr_bs_loss.csv", "csv"),
+    **{
+        name: (_porian_adapter(hparams, dataset, decay), "experiment_results.pickle.xz", "pickle")
+        for name, (hparams, dataset, decay) in PORIAN_VARIANTS.items()
+    },
     **{
         name: (_gemstone_adapter(name), filename, "jsonl")
         for name, filename in GEMSTONE_VARIANTS.items()
     },
-    "activesl_lr_bsz": (
-        adapt_activesl_lr_bsz,
-        ["train-00000-of-00001.parquet", "test-00000-of-00001.parquet"],
-        "parquet",
-    ),
-    "activesl_farseer": (
-        adapt_activesl_farseer,
-        ["train-00000-of-00001.parquet", "test-00000-of-00001.parquet"],
-        "parquet",
-    ),
-    "activesl_data_constrained": (
-        adapt_activesl_data_constrained,
-        ["train-00000-of-00001.parquet", "test-00000-of-00001.parquet"],
-        "parquet",
-    ),
-    # No public source; raw file must be placed manually at
-    # data/raw/warmstart/warmstart_runs_flattened.parquet.
-    "warmstart": (adapt_warmstart, "warmstart_runs_flattened.parquet", "parquet"),
+    **{
+        name: (_warmstart_adapter(method), "warmstart_runs_flattened.parquet", "parquet")
+        for name, method in WARMSTART_VARIANTS.items()
+    },
 }
 
 READERS = {
@@ -315,16 +462,22 @@ def main():
     args = parser.parse_args()
     sources = args.sources or list(ADAPTERS)
 
-    OUT_DIR.mkdir(parents=True, exist_ok=True)
     for name in sources:
         adapt, filenames, filetype = ADAPTERS[name]
 
         if name in GEMSTONE_VARIANTS:
-            raw_dir = RAW_DIR / GEMSTONE_RAW_DIR
+            source = GEMSTONE_RAW_DIR
         elif name in STEPLAW_RAW_DIRS:
-            raw_dir = RAW_DIR / STEPLAW_RAW_DIRS[name]
+            source = STEPLAW_RAW_DIRS[name]
+        elif name in PORIAN_VARIANTS:
+            source = PORIAN_RAW_DIR
+        elif name in WARMSTART_VARIANTS:
+            source = WARMSTART_RAW_DIR
         else:
-            raw_dir = RAW_DIR / name
+            source = name
+        raw_dir = DATA_DIR / source / "raw"
+        out_dir = DATA_DIR / source / "preprocessed"
+        out_dir.mkdir(parents=True, exist_ok=True)
         try:
             if isinstance(filenames, list):
                 df = pd.concat(
@@ -346,7 +499,7 @@ def main():
             c for c in out.columns if c == "D" or (c.startswith("N") and c != "N_definition")
         ]
         out = out.astype({c: "float64" for c in float_cols})
-        out_path = OUT_DIR / f"{name}.csv"
+        out_path = out_dir / f"{name}.csv"
         out.to_csv(out_path, index=False)
         print(f"{name}: {len(out)} rows -> {out_path}")
 

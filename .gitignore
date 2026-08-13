@@ -5,14 +5,9 @@
 
 
 data/*
-!data/raw/
-data/raw/*
-!data/raw/gemstones/
-data/raw/gemstones/*
-!data/raw/gemstones/README.md
-!data/raw/steplaw/
-data/raw/steplaw/*
-!data/raw/steplaw/README.md
+!data/*/
+data/*/*
+!data/*/README.md
 output*/
 results/
 
@@ -24,4 +19,9 @@ __pycache__/
 surrogate_venv
 .venv/
 
+NOTES.md
+METHOD.md
+
+.claude/
 CLAUDE.md
+docs/
