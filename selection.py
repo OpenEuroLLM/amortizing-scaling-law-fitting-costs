@@ -465,9 +465,80 @@ class SuccessiveHalvingGP:
         return int(sub["_pred"].idxmin())                # GP picks the config at that rung
 
 
+class EISelection(DataSelection):
+    """Acquire the pool point with the highest Expected Improvement.
+
+    Minimization: incumbent = best (lowest) observed loss so far. The driver fits a GP
+    on the current observations and passes it in via ``surrogate``; before one is
+    available (or if it fails) we fall back to a random draw so the run can bootstrap.
+    """
+    needs_surrogate = True
+
+    def __init__(self, seed: int):
+        self.seed = seed
+        self.rng = np.random.RandomState(seed)
+        from acquisition import ExpectedImprovement
+        self.acq = ExpectedImprovement()
+
+    def split(self, df_fit, n_points):
+        raise NotImplementedError("EISelection is sequential; use next_point.")
+
+    def next_point(
+        self,
+        df: pd.DataFrame,
+        candidate_set: pd.Index | None = None,
+        acquired_idx: pd.Index | None = None,
+        surrogate=None,
+        **kwargs
+    ) -> int:
+        if candidate_set is None:
+            candidate_set = df.index
+        candidate_set = pd.Index(candidate_set)
+        if surrogate is None or acquired_idx is None or len(acquired_idx) == 0:
+            return int(self.rng.choice(candidate_set))     # bootstrap
+        incumbent = float(df.loc[acquired_idx, TARGET].min())
+        X = np.log(df.loc[candidate_set, FEATURES].to_numpy(float))
+        mu, sigma = surrogate.predict(X, return_std=True)
+        scores = self.acq.score(mu, sigma, incumbent)
+        print(scores)
+        return int(candidate_set[int(np.argmax(scores))])
+
+
+class EIPerCostSelection(EISelection):
+    """Acquire the pool point with the highest EI per unit cost, cost = 6*N*D."""
+
+    def __init__(self, seed: int):
+        super().__init__(seed)
+        from acquisition import ExpectedImprovementPerCost
+        self.acq = ExpectedImprovementPerCost()
+
+    def next_point(
+        self,
+        df: pd.DataFrame,
+        candidate_set: pd.Index | None = None,
+        acquired_idx: pd.Index | None = None,
+        surrogate=None,
+        **kwargs
+    ) -> int:
+        if candidate_set is None:
+            candidate_set = df.index
+        candidate_set = pd.Index(candidate_set)
+        if surrogate is None or acquired_idx is None or len(acquired_idx) == 0:
+            return int(self.rng.choice(candidate_set))     # bootstrap
+        incumbent = float(df.loc[acquired_idx, TARGET].min())
+        X = np.log(df.loc[candidate_set, FEATURES].to_numpy(float))
+        mu, sigma = surrogate.predict(X, return_std=True)
+        cost = df.loc[candidate_set, "C"].to_numpy(float)
+        scores = self.acq.score(mu, sigma, incumbent, cost=cost)
+        print(scores)
+        return int(candidate_set[int(np.argmax(scores))])
+
+
 SELECTION = {
     "random": RandomSelection,
     "local_search": LocalSearch,
     "max_variance": MaxVarianceSelection,
     "farthest_point": FarthestPointSelection,
+    "ei": EISelection,
+    "ei_per_cost": EIPerCostSelection,
 }

@@ -8,7 +8,7 @@ from pathlib import Path
 from scaling.utils import fit_parametric_form, get_pareto_frontier
 
 from models import GPModel, MEAN_FORM_NAMES, KERNEL_NAMES
-from selection import RandomSelection, LocalSearch, MaxVarianceSelection, FarthestPointSelection
+from selection import RandomSelection, LocalSearch, MaxVarianceSelection, FarthestPointSelection, EISelection, EIPerCostSelection
 from parametric_forms import PARAMETRIC_FORMS
 
 
@@ -17,6 +17,8 @@ SELECTION = {
     "local_search": LocalSearch,
     "max_variance": MaxVarianceSelection,
     "farthest_point": FarthestPointSelection,
+    "ei": EISelection,
+    "ei_per_cost": EIPerCostSelection,
 }
 
 MODELS = {
@@ -321,8 +323,9 @@ if __name__ == "__main__":
                     RuntimeWarning, stacklevel=2,
                 )
                 sel_surrogate = None
-        new_idx = splitter.next_point(train_df, pool.index,
-                                      acquired_idx=acquired_idx, surrogate=sel_surrogate)
+        new_idx = splitter.next_point(
+            train_df, pool.index, acquired_idx=acquired_idx, surrogate=sel_surrogate,
+        )
         acquired_idx = acquired_idx.append(pd.Index([new_idx]))
         iter_compute = train_df.loc[new_idx, "C"]
 
@@ -495,6 +498,7 @@ if __name__ == "__main__":
         L_global_hat = form.to_L_vs_C(C_grid, np.asarray(global_best_params))
         ax.plot(C_grid[seen], L_global_hat[seen], color="tab:purple", ls="-.", label="all data fit")
         ax.plot(C_grid[~seen], L_global_hat[~seen], color="tab:purple", ls="--")
+        ax.scatter(obs_df["C"], obs_df["loss"], marker="o", color="black", zorder=3, alpha=0.3)
         ax.set_xscale("log")
         ax.set_xlabel("C")
         ax.set_ylabel("loss")
