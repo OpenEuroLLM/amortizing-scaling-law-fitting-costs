@@ -7,6 +7,7 @@ from .base import DataSelection, TARGET
 class LocalSearch(DataSelection):
     def __init__(self, seed: int, starting_point: dict = None):
         self.seed = seed
+        self.rng = np.random.RandomState(seed)
         self.starting_point = starting_point
 
     def split(self, df_fit, n_points):
@@ -27,7 +28,7 @@ class LocalSearch(DataSelection):
             # sample a random point on the smallest scale
             lr_grid = df_fit[(df_fit['N'] == current_scale_model_size)&(df_fit['D'] == current_scale_token_budget)]['lr'].unique()
             gbsz_grid = df_fit[(df_fit['N'] == current_scale_model_size)&(df_fit['D'] == current_scale_token_budget)]['gbsz'].unique()
-            incumbent = {'lr': np.random.choice(lr_grid), 'gbsz': np.random.choice(gbsz_grid)}
+            incumbent = {'lr': self.rng.choice(lr_grid), 'gbsz': self.rng.choice(gbsz_grid)}
         else:
             incumbent = self.starting_point
         current_best_observed_loss = None
@@ -50,7 +51,7 @@ class LocalSearch(DataSelection):
                     gbsz_grid = \
                     df_fit[(df_fit['N'] == current_scale_model_size) & (df_fit['D'] == current_scale_token_budget)][
                         'gbsz'].unique()
-                    incumbent = {'lr': np.random.choice(lr_grid), 'gbsz': np.random.choice(gbsz_grid)}
+                    incumbent = {'lr': self.rng.choice(lr_grid), 'gbsz': self.rng.choice(gbsz_grid)}
                     index_incumbent = df_fit.index[(df_fit['N'] == current_scale_model_size) & (df_fit['D'] == current_scale_token_budget) & (
                             df_fit['lr'] == incumbent['lr']) & (df_fit['gbsz'] == incumbent['gbsz'])]
 
