@@ -1,4 +1,5 @@
 import numpy as np
+from abc import ABC, abstractmethod
 
 from .base import SurrogateModel
 
@@ -29,13 +30,10 @@ class GPModel(SurrogateModel):
     def __init__(self, **kwargs):
         self._gp = None
         self._likelihood = None
-        self.use_mean_model = False
         self._mean_kwargs = {}
         if "mean_kwargs" in kwargs:
             self._mean_kwargs.update(kwargs["mean_kwargs"])
-        self.mean_form = None
-        if "mean_form" in kwargs:
-            self.mean_form = kwargs["mean_form"]
+        self.mean_form = kwargs.get("mean_form", None)
         self.kernel = kwargs.get("kernel", None) or "matern"
 
     def _build_kernel(self, n_dims: int):
@@ -75,7 +73,7 @@ class GPModel(SurrogateModel):
     def fit(self, train_x: np.ndarray, train_y: np.ndarray, max_attempts: int = 10, **kwargs) -> None:
         # lazy import to avoid requiring gpytorch/botorch unless GPModel is used
         import botorch, gpytorch, torch
-        from mean_functions import MEAN_FORMS
+        from .means import MEAN_FORMS
 
         if self.mean_form is not None and self.mean_form not in MEAN_FORMS:
             raise ValueError(

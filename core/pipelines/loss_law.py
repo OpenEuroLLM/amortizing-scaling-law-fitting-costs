@@ -62,10 +62,10 @@ def add_args(parser):
         "fraction by this axis is the held-out (extrapolation) region. Default 'C'."
     )
     parser.add_argument(
-        '--held_out_frac', type=float, default=0.2,
-        help="Fraction of the grid held out along --split_axis (largest scales) for the "
+        '--max_frac', type=float, default=0.5,
+        help="Fraction of --split_axis's max value that is used as the threshold for "
         "extrapolation eval set. Everything below the threshold is the acquire-able pool, on which "
-        "the in-region (interpolation) recovery is scored. Default 0.2."
+        "the in-region (interpolation) recovery is scored. Default 0.5."
     )
 
 
@@ -73,7 +73,7 @@ def run(args):
     # --- data + two-way fraction split (acquire-able pool / held-out) ---
     df, gp_features = _common.prepare_data(args)
     pool_df, held_out_df = split_search_space(
-        df, held_out_frac=args.held_out_frac, axis=args.split_axis
+        df, max_frac=args.max_frac, axis=args.split_axis
     )
     train_df = pool_df                        # the loop acquires only from the pool
     test_df_known = held_out_df
@@ -90,9 +90,8 @@ def run(args):
         _global_df[GRID_TARGET].to_numpy()[:, None],
         np.log(held_out_df[gp_features].to_numpy()),
         model_type=args.model_type,
-        # mean_form=...,
-        use_mean_model=True if args.gp_mean_as_l0 else False,
-        # kernel=...,
+        kernel=args.gp_kernel,
+        mean_form=args.gp_mean_form,
         diagnose=args.diagnose_gp,
     )
     print(f"Fitting parametric form on all of the data {_global_df.shape}...")
@@ -124,7 +123,7 @@ def run(args):
     if supports_C:
         C_known = _held_pareto["C"].to_numpy()
         L_known = _held_pareto["loss"].to_numpy()
-        C_unknown = C_known.max() * 10.0 ** np.arange(1, 6)   # extrapolation curve beyond the grid
+        C_unknown = C_known.max() * 10.0 ** np.arange(1, 3)   # extrapolation curve beyond the grid
     else:
         C_known = C_unknown = np.array([])
 
@@ -200,11 +199,15 @@ def _plot(args, form, supports_C, history_df, interp_names, train_df, acquired_i
     ax = flat_axes[panel_idx]; panel_idx += 1
     ax.plot(history_df["iter"], history_df["law_mse_pool"], "-o", ms=3, color="#0072B2", label="pool (in-region)")
     ax.plot(history_df["iter"], history_df["law_mse_held_out"], "--s", ms=3, color="#D55E00", label="held-out")
-    ax.set_yscale("log"); ax.set_xlabel("iteration"); ax.set_title("law recovery MSE"); ax.legend(fontsize=9)
+    ax.set_yscale("log"); 
+    ax.set_xlabel("Samples");
+    ax.set_title("law recovery MSE"); ax.legend(fontsize=9)
 
     ax = flat_axes[panel_idx]; panel_idx += 1
     ax.plot(history_df["iter"], history_df["iter_compute"])
-    ax.set_yscale("log"); ax.set_xlabel("iteration"); ax.set_title("compute / iter")
+    ax.set_yscale("log"); 
+    ax.set_xlabel("Samples"); 
+    ax.set_title("compute / iter")
 
     # fit-comparison panel: real vs fantasized parametric fits as L vs C, with the train/held-out
     # regions shaded (only for L-vs-C forms)
@@ -212,13 +215,25 @@ def _plot(args, form, supports_C, history_df, interp_names, train_df, acquired_i
     panel_idx += 1
     if supports_C:
         obs_df = train_df.loc[acquired_idx]
+        ax.scatter(
+            obs_df.C, obs_df.loss, marker="o", color="black", s=20, alpha=0.3, zorder=2,
+            label="observed all points"
+        )
         real_params, _ = build_fit(obs_df, form_name=args.form, fit_quality=args.fit_quality)
         _obs_pareto = get_pareto_frontier(obs_df, x_name="C", y_name="loss")
         C_split = float(held_out_df["C"].min())          # pool | held-out boundary
-        ax.axvspan(C_split, float(held_out_df["C"].max()), color="#fca5a5", alpha=0.12, lw=0,
-                   label="held-out region")
-        ax.scatter(_obs_pareto["C"], _obs_pareto["loss"], marker="x", color="black", zorder=3, label="observed")
-        ax.scatter(C_known, L_known, marker="X", color="#dc2626", zorder=5, label="held-out eval")
+        ax.scatter(
+            _obs_pareto["C"], _obs_pareto["loss"],
+            marker="o", color="black", zorder=3, s=25, label="observed pareto",
+        )
+        ax.scatter(
+            C_known, L_known,
+            marker="x", color="#265ddc", zorder=5, s=25, label="held-out eval"
+        )
+        ax.axvspan(
+            C_split, float(held_out_df["C"].max()),
+            color="#008969", alpha=0.25, lw=0, label="held-out region"
+        )
         C_grid = np.geomspace(obs_df["C"].min(), C_unknown.max(), 200)
         seen = C_grid <= obs_df["C"].max()
         # fit on observed points only; add the surrogate-infilled ("fantasized") fit only when a
@@ -233,9 +248,12 @@ def _plot(args, form, supports_C, history_df, interp_names, train_df, acquired_i
         L_global_hat = form.to_L_vs_C(C_grid, np.asarray(global_best_params))
         ax.plot(C_grid[seen], L_global_hat[seen], color="tab:purple", ls="-.", label="all data fit")
         ax.plot(C_grid[~seen], L_global_hat[~seen], color="tab:purple", ls="--")
+        ax.set_yscale("log")
         ax.set_xscale("log")
-        ax.set_xlabel("C"); ax.set_ylabel("loss")
-        ax.legend(fontsize=12)
+        ax.set_xlabel("FLOPs")
+        ax.set_ylabel("loss")
+        ax.legend(fontsize=10, ncol=1)
+        ax.grid(which="both", ls="--", lw=1, alpha=0.5)
         title = "fit (dashed = beyond seen C)" if args.model_type == "none" else \
                 "real vs fantasized fit (dashed = beyond seen C)"
         ax.set_title(title)

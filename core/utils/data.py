@@ -24,10 +24,12 @@ def clean_grid(src, dst=None):
     return dst
 
 
-def split_search_space(df, held_out_frac=0.2, axis="C"):
+def split_search_space(
+    df, max_frac=0.1, axis="C"
+) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Split the grid into ``(pool, held_out)`` along a compute/scale axis.
 
-    The **held-out** region is the top ``held_out_frac`` of the grid by ``axis`` (the largest scales
+    The **held-out** region is the top ``max_frac`` of the grid by ``axis`` (the largest scales
     -- the extrapolation target, never acquired). Everything below the threshold is the acquire-able
     **pool**: the loop draws from it, and the fitted law's in-region recovery is scored on it too.
     ``axis`` is ``"C"`` (compute ``6ND``, added if missing) or ``"N"``. The two frames are disjoint
@@ -35,20 +37,20 @@ def split_search_space(df, held_out_frac=0.2, axis="C"):
     """
     if axis not in ("C", "N"):
         raise ValueError(f"split axis must be 'C' or 'N', got {axis!r}")
-    if not 0 < held_out_frac < 1:
-        raise ValueError(f"held_out_frac must be in (0, 1), got {held_out_frac}")
+    if not 0 < max_frac < 1:
+        raise ValueError(f"max_frac must be in (0, 1), got {max_frac}")
     df = df.copy()
     if axis == "C" and "C" not in df.columns:
         df["C"] = 6.0 * df["N"] * df["D"]
 
-    thresh = df[axis].quantile(1.0 - held_out_frac)   # top-`held_out_frac` slice = held out
+    thresh = df[axis].max() * max_frac
     held_out_df = df[df[axis] >= thresh]
     pool_df = df[df[axis] < thresh]
     if held_out_df.empty or pool_df.empty:
         raise ValueError(
-            f"held_out_frac={held_out_frac} on axis '{axis}' left an empty region "
+            f"max_frac={max_frac} on axis '{axis}' left an empty region "
             f"({len(pool_df)} pool / {len(held_out_df)} held-out rows) -- the axis likely has too "
-            f"few distinct values; lower held_out_frac or use more scales."
+            f"few distinct values; lower max_frac or use more scales."
         )
     return pool_df, held_out_df
 
@@ -56,7 +58,9 @@ def split_search_space(df, held_out_frac=0.2, axis="C"):
 FEATURE_SETS = ("default", "arch", "data", "full")
 
 
-def resolve_grid_features(df: pd.DataFrame, feature_set: str = "default") -> list[str]:
+def resolve_grid_features(
+        df: pd.DataFrame, feature_set: str = "default", hp_list: list[str] | None = None
+    ) -> list[str]:
     """Columns the GP conditions on for this dataset, by mode.
 
     ``default`` -> DEFAULT_FEATURES (N, D, lr, gbsz);
@@ -71,7 +75,7 @@ def resolve_grid_features(df: pd.DataFrame, feature_set: str = "default") -> lis
     """
     if feature_set not in FEATURE_SETS:
         raise ValueError(f"Unknown feature_set '{feature_set}' (expected one of {FEATURE_SETS}).")
-    wanted = list(DEFAULT_FEATURES)
+    wanted = list(DEFAULT_FEATURES) + (hp_list if hp_list is not None else [])
     if feature_set in ("arch", "full"):
         wanted += ARCH_FEATURES
     if feature_set in ("data", "full"):
