@@ -233,7 +233,7 @@ def run_acquisition(args, form, gp_features, train_df, global_best_params, fit_g
         best_params, best_loss = fit_grid(df_pred)
         if best_loss < _best_fit_loss:  # incumbent by in-data fit loss, for GP mean warm-start
             _best_fit_loss, _best_fit_params = best_loss, best_params
-        print(f"#Iteration {iter_idx} on {observations.shape[0]} points: Fitting loss={best_loss:2.2e}", end="; ")
+        print(f"#Iteration {iter_idx} on {observations.shape[0]} obs + {len(remaining_idx)} fant: Fitting loss={best_loss:2.2e}", end="; ")
         print_fit_results(form, best_params)
 
         # regrets in interpretable space; irreducible-loss-like terms (form.signed_params) keep sign
@@ -244,19 +244,36 @@ def run_acquisition(args, form, gp_features, train_df, global_best_params, fit_g
             else abs(interp[name] - global_interp[name])
             for name in interp_names
         }
+    
+        ## obs only params
+        obs_only_params, obs_only_best_loss = fit_grid(observations)
+        obs_only_interp = form.interpretable(obs_only_params)
+        obs_only_regrets = {
+            name: (obs_only_interp[name] - global_interp[name]) if name in form.signed_params
+            else abs(obs_only_interp[name] - global_interp[name])
+            for name in interp_names
+        }
+        print(f"Fit on {observations.shape[0]} obs only: Fitting loss={obs_only_best_loss:2.2e}", end="; ")
+        print_fit_results(form, obs_only_params)    
+        
 
         history.append({
             "iter": iter_idx,
             "n_acquired": len(acquired_idx),
-            "acquired_idx": int(new_idx),
+            "acquired_idx": list(acquired_idx),
+            "new_idx": int(new_idx),
+            "C_lim": float(C_lim),
             "iter_compute": float(iter_compute),
             "total_compute_spent": float(total_compute_spent),
             "heldout_mse": float(heldout_mse),
             "heldout_size": len(remaining_idx),
             **heldout_metric(best_params),
-            "params": list(best_params),
+            "params": list(best_params), # obs+fant params at iteration i, not incumbent!
             "fit_loss": float(best_loss),
+            "obs_only_params": list(obs_only_params),
+            "obs_only_fit_loss": float(obs_only_best_loss),
             **{f"regret_{name}": float(regrets[name]) for name in interp_names},
+            **{f"regret_obs_only_{name}": float(obs_only_regrets[name]) for name in interp_names},
         })
         # updating incumbent tracker
         # signed params: incumbent is the value closest to zero, sign preserved; others: plain min
@@ -280,7 +297,9 @@ def run_acquisition(args, form, gp_features, train_df, global_best_params, fit_g
 # --- shared plotting helpers (both tasks lay out a grid of per-param regret panels) ---
 
 def plot_regret_panels(flat_axes, start_idx, history_df, form, interp_names):
-    """Draw one incumbent-regret panel per interpretable param; return the next free panel index.
+    """
+    Draw one incumbent-regret panel per interpretable param, plotting both
+    'regret_{name}' and 'regret_obs_only_{name}' in the same panel. Returns the next free panel index.
 
     Signed params (irreducible-loss-like) track the running value closest to zero with sign
     preserved (matches the printed incumbents); others track the running minimum on a log axis.
@@ -289,6 +308,12 @@ def plot_regret_panels(flat_axes, start_idx, history_df, form, interp_names):
     for name in interp_names:
         ax = flat_axes[idx]
         col = f"regret_{name}"
+        
+        obs_only_col = f"regret_obs_only_{name}"
+        color_main = "red"
+        color_obs_only = "tab:green"
+
+        # Plot primary regret line
         if name in form.signed_params:
             vals = history_df[col].to_numpy()
             signed_running, best = [], vals[0]
@@ -296,14 +321,34 @@ def plot_regret_panels(flat_axes, start_idx, history_df, form, interp_names):
                 if abs(v) < abs(best):
                     best = v
                 signed_running.append(best)
-            ax.plot(history_df["iter"], signed_running)
+            ax.plot(history_df["iter"], signed_running, label=f"obs+fant regret {name}", color=color_main)
             ax.axhline(0, color="gray", lw=0.5)
-            ax.set_title(f"incumbent regret {name} (signed)")
+            title = f"incumbent regret {name} (signed)"
         else:
-            ax.plot(history_df["iter"], np.minimum.accumulate(history_df[col]))
+            vals = history_df[col].to_numpy()
+            running_min = np.minimum.accumulate(vals)
+            ax.plot(history_df["iter"], running_min, label=f"obs+fant regret {name}", color=color_main)
             ax.set_yscale("log")
-            ax.set_title(f"incumbent regret {name}")
+            title = f"incumbent regret {name}"
+
+        # Plot obs_only regret line if present
+        if obs_only_col in history_df.columns:
+            obs_vals = history_df[obs_only_col].to_numpy()
+            if name in form.signed_params:
+                signed_running_obs, best_obs = [], obs_vals[0]
+                for v in obs_vals:
+                    if abs(v) < abs(best_obs):
+                        best_obs = v
+                    signed_running_obs.append(best_obs)
+                ax.plot(history_df["iter"], signed_running_obs, label=f"obs only regret {name}", color=color_obs_only)
+            else:
+                running_min_obs = np.minimum.accumulate(obs_vals)
+                ax.plot(history_df["iter"], running_min_obs, label=f"obs only regret {name}", color=color_obs_only)
+        
         ax.set_xlabel("Samples")
+        ax.set_title(title)
+        ax.legend(fontsize=9)
+
         idx += 1
     return idx
 
