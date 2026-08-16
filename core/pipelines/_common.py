@@ -9,7 +9,12 @@ log regret/MSE -- and differ only in two callbacks:
 - ``heldout_metric(params) -> dict``: task-specific held-out fields merged into each history row
   (e.g. loss_law's known_test_mse + L-vs-C curves; hp_law's optimal-HP MSE).
 """
+import json
+import sys
 import warnings
+from argparse import Namespace
+from datetime import datetime, timezone
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -351,6 +356,83 @@ def plot_regret_panels(flat_axes, start_idx, history_df, form, interp_names):
 
         idx += 1
     return idx
+
+
+def dataset_name_from_input(input_path: str) -> str:
+    """Basename of the input CSV without extension (e.g. ``.../oellm_english.csv`` -> ``oellm_english``)."""
+    return Path(input_path).stem
+
+
+def run_seed_dir(args) -> Path:
+    """Directory for all runs sharing dataset, form, and seed."""
+    return (
+        Path(args.output_dir)
+        / dataset_name_from_input(args.input)
+        / args.form
+        / f"seed_{args.seed}"
+    )
+
+
+def run_experiment_dir(args) -> Path:
+    """Directory grouping all runs for one ``--filename``."""
+    return run_seed_dir(args) / args.filename
+
+
+def _new_run_timestamp(experiment_dir: Path) -> str:
+    """UTC timestamp label for a new run under ``experiment_dir``."""
+    ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+    while (experiment_dir / ts).exists():
+        ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S_%f")
+    return ts
+
+
+def allocate_run_output_dir(args) -> Path:
+    """Pick a run directory: ``.../{filename}/{timestamp}/``."""
+    experiment_dir = run_experiment_dir(args)
+    run_ts = _new_run_timestamp(experiment_dir)
+    run_dir = experiment_dir / run_ts
+    print(f"Writing run to {run_dir}/")
+    return run_dir
+
+
+def find_latest_run_dir(args) -> Path | None:
+    """Most recent timestamped run under ``--filename``."""
+    experiment_dir = run_experiment_dir(args)
+    if not experiment_dir.is_dir():
+        return None
+    matches = [p for p in experiment_dir.iterdir() if p.is_dir()]
+    if not matches:
+        return None
+    return max(matches, key=lambda p: p.stat().st_mtime)
+
+
+def _namespace_to_json(args: Namespace) -> dict:
+    out = {}
+    for k, v in vars(args).items():
+        if isinstance(v, Path):
+            out[k] = str(v)
+        elif isinstance(v, (list, tuple)):
+            out[k] = list(v)
+        else:
+            out[k] = v
+    return out
+
+
+def save_run_args(args, output_dir: Path) -> None:
+    """Write the parsed CLI args (and raw argv) for reproducibility."""
+    payload = {
+        "task": args.task,
+        "argv": sys.argv,
+        "args": _namespace_to_json(args),
+        "run_dir": str(output_dir),
+        "experiment_dir": str(output_dir.parent),
+        "experiment_name": args.filename,
+        "run_timestamp": output_dir.name,
+        "saved_at": datetime.now(timezone.utc).isoformat(),
+    }
+    path = output_dir / "args.json"
+    path.write_text(json.dumps(payload, indent=2, sort_keys=True))
+    print(f"Saved args to {path}")
 
 
 def save_panels(fig, flat_axes, panel_idx, path):

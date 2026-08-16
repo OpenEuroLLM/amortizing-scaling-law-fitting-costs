@@ -18,8 +18,6 @@ the held-out scales (`law_mse_held_out`). The held-out scales are never acquired
 
 Dispatched from ``main.py`` (``python main.py hp_law ...``).
 """
-from pathlib import Path
-
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
@@ -130,11 +128,13 @@ def run(args):
     print(f"{'-'*30}")
     print("Run done!")
 
-    output_dir = Path(args.output_dir) / f"seed_{args.seed}"
+    output_dir = _common.allocate_run_output_dir(args)
     output_dir.mkdir(parents=True, exist_ok=True)
+    _common.save_run_args(args, output_dir)
     history_df = pd.DataFrame(history)
-    history_df.to_parquet(output_dir / f"{args.filename}.parquet", index=False)
-    print(f"Saved history to {output_dir / f'{args.filename}.parquet'}")
+    history_path = output_dir / "history.parquet"
+    history_df.to_parquet(history_path, index=False)
+    print(f"Saved history to {history_path}")
 
     if args.plot_figure:
         _plot(args, form, history_df, interp_names, df_pred, test_opt,
@@ -176,4 +176,4 @@ def _plot(args, form, history_df, interp_names, df_pred, test_opt,
     ax.set_xlabel(scale_col); ax.set_ylabel(f"optimal {target}")
     ax.set_title(f"optimal {target} vs {scale_col}"); ax.grid(alpha=0.3, which="both"); ax.legend(fontsize=8)
 
-    _common.save_panels(fig, flat_axes, panel_idx, output_dir / f"{args.filename}.png")
+    _common.save_panels(fig, flat_axes, panel_idx, output_dir / "figure.png")

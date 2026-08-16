@@ -17,8 +17,6 @@ in-region->held-out generalization gap. Handles every form whose target is ``los
 
 Dispatched from ``main.py`` (``python main.py loss_law ...``).
 """
-from pathlib import Path
-
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
@@ -168,11 +166,13 @@ def run(args):
     print(f"{'-'*30}")
     print("Run done!")
 
-    output_dir = Path(args.output_dir) / f"seed_{args.seed}"
+    output_dir = _common.allocate_run_output_dir(args)
     output_dir.mkdir(parents=True, exist_ok=True)
+    _common.save_run_args(args, output_dir)
     history_df = pd.DataFrame(history)
-    history_df.to_parquet(output_dir / f"{args.filename}.parquet", index=False)
-    print(f"Saved history to {output_dir / f'{args.filename}.parquet'}")
+    history_path = output_dir / "history.parquet"
+    history_df.to_parquet(history_path, index=False)
+    print(f"Saved history to {history_path}")
 
     if args.plot_figure:
         _plot(args, form, supports_C, history_df, interp_names, train_df, acquired_idx,
@@ -216,7 +216,7 @@ def _plot(args, form, supports_C, history_df, interp_names, train_df, acquired_i
     if supports_C:
         obs_df = train_df.loc[acquired_idx]
         ax.scatter(
-            obs_df.C, obs_df.loss, marker="o", color="black", s=20, alpha=0.3, zorder=2,
+            obs_df.C, obs_df.loss, marker="o", color="black", s=5, alpha=0.3, zorder=2,
             label="observed all points"
         )
         real_params, _ = build_fit(obs_df, form_name=args.form, fit_quality=args.fit_quality)
@@ -260,4 +260,4 @@ def _plot(args, form, supports_C, history_df, interp_names, train_df, acquired_i
     else:
         ax.axis("off")  # width_depth: no compute axis to plot against
 
-    _common.save_panels(fig, flat_axes, panel_idx, output_dir / f"{args.filename}.png")
+    _common.save_panels(fig, flat_axes, panel_idx, output_dir / "figure.png")
