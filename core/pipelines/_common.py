@@ -249,18 +249,21 @@ def run_acquisition(args, form, gp_features, train_df, global_best_params, fit_g
             else abs(interp[name] - global_interp[name])
             for name in interp_names
         }
-    
-        ## obs only params
-        obs_only_params, obs_only_best_loss = fit_grid(observations)
-        obs_only_interp = form.interpretable(obs_only_params)
-        obs_only_regrets = {
-            name: (obs_only_interp[name] - global_interp[name]) if name in form.signed_params
-            else abs(obs_only_interp[name] - global_interp[name])
-            for name in interp_names
-        }
-        print(f"Fit on {observations.shape[0]} obs only: Fitting loss={obs_only_best_loss:2.2e}", end="; ")
-        print_fit_results(form, obs_only_params)    
         
+        if args.model_type == "none":
+            # model-free: no infill, so obs-only fit equals obs+fant fit
+            obs_only_params, obs_only_best_loss = best_params, best_loss
+            obs_only_regrets = regrets
+        else:
+            obs_only_params, obs_only_best_loss = fit_grid(observations)
+            obs_only_interp = form.interpretable(obs_only_params)
+            obs_only_regrets = {
+                name: (obs_only_interp[name] - global_interp[name]) if name in form.signed_params
+                else abs(obs_only_interp[name] - global_interp[name])
+                for name in interp_names
+            }
+            print(f"Fit on {observations.shape[0]} obs only: Fitting loss={obs_only_best_loss:2.2e}", end="; ")
+            print_fit_results(form, obs_only_params)
 
         history.append({
             "iter": iter_idx,
