@@ -102,7 +102,7 @@ python main.py loss_law \
     --held_out_frac 0.2          # top fraction by --split_axis held out (extrapolation eval)
 ```
 
-Each iteration selects a new point, infills the rest of the grid with the surrogate (_fantasization_), fits the chosen parametric `--form`, and logs the fit, per-parameter regret, and the fitted law's MSE on **both regions**. The run writes `output_dir/{dataset}/{form}/seed_{seed}/{filename}/{timestamp}/history.parquet` and `args.json` (add `--plot_figure` for `figure.png`), where `{dataset}` is the input CSV stem and `{timestamp}` is UTC (`YYYYMMDD_HHMMSS`). Use `--model_type none` (model-free) to fit directly on the observed points and skip the surrogate infill.
+Each iteration selects a new point, infills the rest of the grid with the surrogate (_fantasization_), fits the chosen parametric `--form`, and logs the fit, per-parameter regret, and the fitted law's MSE on **both regions**. The run writes `output_dir/{filename}/{dataset}/{form}/seed_{seed}/{timestamp}/history.parquet` and `args.json` (add `--plot_figure` for `figure.png`), where `{dataset}` is the input CSV stem and `{timestamp}` is UTC (`YYYYMMDD_HHMMSS`). Use `--model_type none` (model-free) to fit directly on the observed points and skip the surrogate infill.
 
 **Two-region evaluation.** The grid is split along `--split_axis` into the acquire-able **pool** (everything below the threshold — the loop draws from it) and the top-fraction **held-out** region (`--held_out_frac` — the largest scales, never acquired). Every iteration scores the recovered law on both, written as `law_mse_pool` (in-region recovery on the searched scales) and `law_mse_held_out` (extrapolation; `known_test_mse` is kept as a back-compat alias of the latter). Their gap is the in-region→held-out generalization gap — the diagnostic/comparison figures plot the two as a solid (pool) + dashed (held-out) pair.
 
@@ -132,7 +132,7 @@ python main.py hp_law \
     --plot_figure
 ```
 
-It reduces the grid to the optimal HP **per scale** (min-loss row at each `N,D` / `D`) and fits the step law to those optima. It uses the same **two-region** split as `loss_law`, but along the form's scale axis: the largest `--held_out_frac` of scales are held out (extrapolation) and the rest are the acquire-able pool (needs ≥3 scales to fit). Each iteration logs the predicted-vs-actual optimal-HP log-MSE on both — `law_mse_pool` (in-region) and `law_mse_held_out`. Writes `output_dir/{dataset}/{form}/seed_{seed}/{filename}/{timestamp}/history.parquet` and `args.json`.
+It reduces the grid to the optimal HP **per scale** (min-loss row at each `N,D` / `D`) and fits the step law to those optima. It uses the same **two-region** split as `loss_law`, but along the form's scale axis: the largest `--held_out_frac` of scales are held out (extrapolation) and the rest are the acquire-able pool (needs ≥3 scales to fit). Each iteration logs the predicted-vs-actual optimal-HP log-MSE on both — `law_mse_pool` (in-region) and `law_mse_held_out`. Writes `output_dir/{filename}/{dataset}/{form}/seed_{seed}/{timestamp}/history.parquet` and `args.json`.
 
 ### One-shot surrogate fit (alternative baseline)
 

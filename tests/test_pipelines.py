@@ -34,9 +34,9 @@ class TestPipelinesSmoke(unittest.TestCase):
             proc = subprocess.run(cmd, cwd=REPO_ROOT, capture_output=True, text=True)
             self.assertEqual(proc.returncode, 0, msg=f"{task} failed:\n{proc.stderr[-2000:]}")
 
-            exp_dir = out / "grid" / form / "seed_0" / "history"
-            self.assertTrue(exp_dir.is_dir(), f"{task} wrote no experiment dir")
-            run_dir = max(exp_dir.iterdir(), key=lambda p: p.stat().st_mtime)
+            seed_dir = out / "history" / "grid" / form / "seed_0"
+            self.assertTrue(seed_dir.is_dir(), f"{task} wrote no seed dir")
+            run_dir = max(seed_dir.iterdir(), key=lambda p: p.stat().st_mtime)
             hist_path = run_dir / "history.parquet"
             args_path = run_dir / "args.json"
             self.assertTrue(hist_path.exists(), f"{task} wrote no history parquet")

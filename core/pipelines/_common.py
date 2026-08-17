@@ -366,44 +366,44 @@ def dataset_name_from_input(input_path: str) -> str:
     return Path(input_path).stem
 
 
+def run_experiment_dir(args) -> Path:
+    """Top-level directory for one ``--filename`` experiment."""
+    return Path(args.output_dir) / args.filename
+
+
 def run_seed_dir(args) -> Path:
-    """Directory for all runs sharing dataset, form, and seed."""
+    """Directory for all timestamped runs sharing filename, dataset, form, and seed."""
     return (
-        Path(args.output_dir)
+        run_experiment_dir(args)
         / dataset_name_from_input(args.input)
         / args.form
         / f"seed_{args.seed}"
     )
 
 
-def run_experiment_dir(args) -> Path:
-    """Directory grouping all runs for one ``--filename``."""
-    return run_seed_dir(args) / args.filename
-
-
-def _new_run_timestamp(experiment_dir: Path) -> str:
-    """UTC timestamp label for a new run under ``experiment_dir``."""
+def _new_run_timestamp(seed_dir: Path) -> str:
+    """UTC timestamp label for a new run under ``seed_dir``."""
     ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
-    while (experiment_dir / ts).exists():
+    while (seed_dir / ts).exists():
         ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S_%f")
     return ts
 
 
 def allocate_run_output_dir(args) -> Path:
-    """Pick a run directory: ``.../{filename}/{timestamp}/``."""
-    experiment_dir = run_experiment_dir(args)
-    run_ts = _new_run_timestamp(experiment_dir)
-    run_dir = experiment_dir / run_ts
+    """Pick a run directory: ``{filename}/{dataset}/{form}/seed_{seed}/{timestamp}/``."""
+    seed_dir = run_seed_dir(args)
+    run_ts = _new_run_timestamp(seed_dir)
+    run_dir = seed_dir / run_ts
     print(f"Writing run to {run_dir}/")
     return run_dir
 
 
 def find_latest_run_dir(args) -> Path | None:
-    """Most recent timestamped run under ``--filename``."""
-    experiment_dir = run_experiment_dir(args)
-    if not experiment_dir.is_dir():
+    """Most recent timestamped run for this filename/dataset/form/seed combo."""
+    seed_dir = run_seed_dir(args)
+    if not seed_dir.is_dir():
         return None
-    matches = [p for p in experiment_dir.iterdir() if p.is_dir()]
+    matches = [p for p in seed_dir.iterdir() if p.is_dir()]
     if not matches:
         return None
     return max(matches, key=lambda p: p.stat().st_mtime)
@@ -428,7 +428,8 @@ def save_run_args(args, output_dir: Path) -> None:
         "argv": sys.argv,
         "args": _namespace_to_json(args),
         "run_dir": str(output_dir),
-        "experiment_dir": str(output_dir.parent),
+        "experiment_dir": str(run_experiment_dir(args)),
+        "seed_dir": str(output_dir.parent),
         "experiment_name": args.filename,
         "run_timestamp": output_dir.name,
         "saved_at": datetime.now(timezone.utc).isoformat(),
