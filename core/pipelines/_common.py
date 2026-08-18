@@ -56,6 +56,24 @@ def mse_on_frontier(front: pd.DataFrame, form, params) -> float:
     return float(np.mean((L_hat - L_true) ** 2))
 
 
+def seed_everything(seed: int) -> None:
+    """Seed every RNG the acquisition loop touches, for run-to-run reproducibility.
+
+    ``args.seed`` already drives the NumPy point-selection RNGs (each selector owns a
+    ``RandomState``); this additionally pins the *global* NumPy RNG and torch's global RNG.
+    The latter is what botorch's ``fit_gpytorch_mll`` draws on for its multi-start L-BFGS
+    restart initialization -- without it the GP fit (and every GP-guided selector) is
+    non-deterministic even at a fixed ``--seed``. torch is imported lazily so the model-free
+    and non-GP paths don't pay for it.
+    """
+    np.random.seed(seed)
+    try:
+        import torch
+        torch.manual_seed(seed)
+    except ImportError:
+        pass
+
+
 def add_acquisition_args(parser):
     """CLI flags shared by every acquisition-loop task. Tasks add their own ``--form``."""
     parser.add_argument('--seed', type=int, required=True)
@@ -150,6 +168,7 @@ def run_acquisition(args, form, gp_features, train_df, global_best_params, fit_g
         raise ValueError("Only one of --niters or --C_budget can be specified.")
     n_iters = args.init_points + (args.niters or (MAX_ITERS - args.init_points))
 
+    seed_everything(args.seed)
     splitter = SELECTION[args.selection](seed=args.seed)
     if args.model_type == "none" and getattr(splitter, "needs_surrogate", False):
         raise ValueError(
@@ -180,7 +199,7 @@ def run_acquisition(args, form, gp_features, train_df, global_best_params, fit_g
         if args.gp_mean_warmstart and _best_fit_params is not None:
             mk["init_params"] = _best_fit_params
         return dict(kernel=args.gp_kernel, mean_form=args.gp_mean_form,
-                    mean_kwargs=mk, diagnose=args.diagnose_gp)
+                    mean_kwargs=mk, diagnose=args.diagnose_gp, seed=args.seed)
     for iter_idx in range(args.init_points, n_iters + 1):
         # budget checks
         if args.C_budget is not None and total_compute_spent >= args.C_budget:
