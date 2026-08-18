@@ -23,9 +23,11 @@ class TabPFNBOModel(SurrogateModel):
     (>1) averages several internal permutations for a smoother posterior.
     """
 
-    def __init__(self, n_estimators: int = 8, random_state: int = 0, **kwargs):
+    def __init__(self, n_estimators: int = 8, random_state: int = 0,
+                 seed: int | None = None, **kwargs):
         self.n_estimators = kwargs.get("tabpfn_n_estimators", n_estimators)
-        self.random_state = random_state
+        # the pipeline threads --seed through as `seed`; honor it for reproducibility
+        self.random_state = seed if seed is not None else random_state
 
     def fit(self, train_x: np.ndarray, train_y: np.ndarray, **kwargs) -> None:
         from tabpfn import TabPFNRegressor
@@ -77,9 +79,11 @@ class TabPFNEnsembleModel(SurrogateModel):
     the ensemble drive variance-/EI-based selection, unlike a single TabPFN.
     """
 
-    def __init__(self, n_members: int = 8, random_state: int = 0, **kwargs):
+    def __init__(self, n_members: int = 8, random_state: int = 0,
+                 seed: int | None = None, **kwargs):
         self.n_members = kwargs.get("tabpfn_n_members", n_members)
-        self.random_state = random_state
+        # the pipeline threads --seed through as `seed`; honor it for reproducibility
+        self.random_state = seed if seed is not None else random_state
         self._regs: list = []
 
     def fit(self, train_x: np.ndarray, train_y: np.ndarray, **kwargs) -> None:

@@ -32,9 +32,11 @@ class XGBoostEnsembleModel(SurrogateModel):
     ensemble drive variance-/EI-based selection.
     """
 
-    def __init__(self, n_members: int = 16, random_state: int = 0, **kwargs):
+    def __init__(self, n_members: int = 16, random_state: int = 0,
+                 seed: int | None = None, **kwargs):
         self.n_members = kwargs.get("xgb_n_members", n_members)
-        self.random_state = random_state
+        # the pipeline threads --seed through as `seed`; honor it for reproducibility
+        self.random_state = seed if seed is not None else random_state
         self._params = _xgb_params(kwargs)
         self._regs: list = []
 
