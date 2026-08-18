@@ -49,7 +49,10 @@ class TestFormsRegistry(unittest.TestCase):
 
 class TestSurrogateRegistry(unittest.TestCase):
     def test_expected_models_present(self):
-        self.assertEqual(set(MODELS), {"none", "gp", "tabpfn", "ag"})
+        self.assertEqual(
+            set(MODELS),
+            {"none", "gp", "tabpfn", "ag", "xgb_ens"},
+        )
 
     def test_null_surrogate_predicts_nan(self):
         # model-free path: fit is a no-op, predict returns NaN so the caller's dropna keeps only the
@@ -63,7 +66,11 @@ class TestSurrogateRegistry(unittest.TestCase):
 
 class TestSelectionRegistry(unittest.TestCase):
     def test_expected_selectors_present(self):
-        self.assertEqual(set(SELECTION), {"random", "local_search", "max_variance", "farthest_point"})
+        self.assertEqual(
+            set(SELECTION),
+            {"random", "local_search", "max_variance", "farthest_point",
+             "ei", "ei_per_cost"},
+        )
 
     def test_surrogate_free_selectors_instantiate(self):
         # random / farthest_point must work without a GP (they drive the model-free baseline).

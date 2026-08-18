@@ -10,12 +10,14 @@ from .base import SurrogateModel, NullSurrogate
 from .gp import GPModel
 from .tabpfn import TabPFNModel
 from .autogluon import AutoGluonModel
+from .xgboost import XGBoostEnsembleModel
 
 MODELS = {
     "none": NullSurrogate,
     "gp": GPModel,
     "tabpfn": TabPFNModel,
     "ag": AutoGluonModel,
+    "xgb_ens": XGBoostEnsembleModel,
 }
 
 
@@ -47,6 +49,7 @@ __all__ = [
     "GPModel",
     "TabPFNModel",
     "AutoGluonModel",
+    "XGBoostEnsembleModel",
     "MODELS",
     "build_surrogate",
 ]

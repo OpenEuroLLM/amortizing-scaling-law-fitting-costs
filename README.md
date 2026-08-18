@@ -176,6 +176,7 @@ A CSV with at least these columns:
 | `gp` | `GPModel` | BoTorch + GPyTorch (Matérn kernel, ARD) |
 | `tabpfn` | `TabPFNModel` | TabPFN |
 | `ag` | `AutoGluonModel` | AutoGluon TabularPredictor |
+| `xgb_ens` | `XGBoostEnsembleModel` | Bootstrap-bagged XGBoost ensemble (uncertainty from member spread) |
 
 All models receive log-transformed features.
 
