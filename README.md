@@ -174,10 +174,14 @@ A CSV with at least these columns:
 |---|---|---|
 | `none` | `NullSurrogate` | No surrogate (model-free): fit `L(C)` directly on the observed compute-optimal points |
 | `gp` | `GPModel` | BoTorch + GPyTorch (Matérn kernel, ARD) |
-| `tabpfn` | `TabPFNModel` | TabPFN |
 | `tabpfn_ens` | `TabPFNEnsembleModel` | Seed-bagged TabPFN ensemble (uncertainty from member spread) |
+| `tabpfn_bo` | `TabPFNBOModel` | TabPFN Bayesian-optimization surrogate: posterior mean/std from the bar distribution + exact EI (pairs with `--selection tabpfn_ei`) |
 | `ag` | `AutoGluonModel` | AutoGluon TabularPredictor |
 | `xgb_ens` | `XGBoostEnsembleModel` | Bootstrap-bagged XGBoost ensemble (uncertainty from member spread) |
+
+Single-model TabPFN / XGBoost are intentionally not exposed: one tree model or one
+TabPFN call gives no usable predictive uncertainty. Use the `_ens` variants, or
+`tabpfn_bo` (the one single-TabPFN exception, which has a genuine posterior).
 
 All models receive log-transformed features.
 

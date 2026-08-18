@@ -51,7 +51,7 @@ class TestSurrogateRegistry(unittest.TestCase):
     def test_expected_models_present(self):
         self.assertEqual(
             set(MODELS),
-            {"none", "gp", "tabpfn", "tabpfn_ens", "ag", "xgb_ens"},
+            {"none", "gp", "tabpfn_ens", "tabpfn_bo", "ag", "xgb_ens"},
         )
 
     def test_null_surrogate_predicts_nan(self):
@@ -69,7 +69,7 @@ class TestSelectionRegistry(unittest.TestCase):
         self.assertEqual(
             set(SELECTION),
             {"random", "local_search", "max_variance", "farthest_point",
-             "ei", "ei_per_cost"},
+             "ei", "ei_per_cost", "tabpfn_ei"},
         )
 
     def test_surrogate_free_selectors_instantiate(self):
