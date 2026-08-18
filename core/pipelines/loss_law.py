@@ -17,6 +17,7 @@ in-region->held-out generalization gap. Handles every form whose target is ``los
 
 Dispatched from ``main.py`` (``python main.py loss_law ...``).
 """
+import json
 from pathlib import Path
 
 import matplotlib.pyplot as plt
@@ -44,6 +45,78 @@ def _supports_compute_axis(form) -> bool:
         return True
     except NotImplementedError:
         return False
+
+
+def _compute_pareto_membership_diagnostics(observations, df_pred, global_df) -> dict:
+    """Compare global, observed-only, and fantasized C-loss Pareto frontiers."""
+    obs_pareto = get_pareto_frontier(observations, x_name="C", y_name="loss")
+    acq = set(obs_pareto.index)
+
+    fant_pareto = get_pareto_frontier(df_pred, x_name="C", y_name="loss")
+    fant_idx = set(fant_pareto.index)
+
+    global_pareto = get_pareto_frontier(global_df, x_name="C", y_name="loss")
+    global_idx = set(global_pareto.index)
+
+    return {
+        "n_observations": int(observations.shape[0]),
+        "counts": {
+            "global_frontier": len(global_idx),
+            "global_in_observed": len(global_idx & acq),
+            "global_in_fantasized": len(global_idx & fant_idx),
+            "observed_frontier": len(acq),
+            "fantasized_frontier": len(fant_idx),
+            "fantasized_from_observed": len(fant_idx & acq),
+            "fantasized_from_gp": len(fant_idx - acq),
+        },
+        "indices": {
+            "global_frontier": sorted(int(i) for i in global_idx),
+            "global_in_observed": sorted(int(i) for i in global_idx & acq),
+            "global_in_fantasized": sorted(int(i) for i in global_idx & fant_idx),
+            "observed_frontier": sorted(int(i) for i in acq),
+            "fantasized_frontier": sorted(int(i) for i in fant_idx),
+            "fantasized_from_observed": sorted(int(i) for i in fant_idx & acq),
+            "fantasized_from_gp": sorted(int(i) for i in fant_idx - acq),
+        },
+    }
+
+
+def _print_pareto_membership_diagnostics(diag: dict) -> None:
+    """Print the summary table from ``_compute_pareto_membership_diagnostics``."""
+    labels = [
+        ("global_frontier", "global frontier"),
+        ("global_in_observed", "    global points in observed set"),
+        ("global_in_fantasized", "    global points in fantasized set"),
+        ("observed_frontier", "observed-only frontier"),
+        ("fantasized_frontier", "fantasized frontier"),
+        ("fantasized_from_observed", "    from observed points"),
+        ("fantasized_from_gp", "    from GP predictions"),
+    ]
+    counts = diag["counts"]
+    width = max(len(label) for _, label in labels)
+    print(f"{'='*30}\nDiagnostics for Pareto membership:")
+    print(f"observations: ({diag['n_observations']},)")
+    print(f"{'-'*width} : {'-'*10}")
+    for key, label in labels[:3]:
+        print(f"{label:<{width}} : {counts[key]} points")
+    print(f"{'-'*width} : {'-'*10}")
+    for key, label in labels[3:]:
+        print(f"{label:<{width}} : {counts[key]} points")
+    print(f"{'='*30}")
+
+
+def _save_pareto_membership(diag: dict, output_dir: Path) -> None:
+    path = output_dir / "pareto_membership.json"
+    path.write_text(json.dumps(diag, indent=2, sort_keys=True))
+    print(f"Saved pareto membership diagnostics to {path}")
+
+
+def reconstruct_df_pred_at_iter(train_df, history_row, pred_iter_df, y_target="loss"):
+    """Rebuild obs+fant ``df_pred`` for one iteration from saved history + predictions."""
+    df_pred = train_df.copy()
+    if pred_iter_df is not None and len(pred_iter_df):
+        df_pred.loc[pred_iter_df["idx"], y_target] = pred_iter_df["pred_loss"].to_numpy()
+    return df_pred.dropna(subset=[y_target])
 
 
 def add_args(parser):
@@ -151,9 +224,16 @@ def run(args):
         return out
 
     # --- acquisition loop ---
-    history, incumbents, interp_names, df_pred, acquired_idx = _common.run_acquisition(
+    history, incumbents, interp_names, df_pred, acquired_idx, surrogate_pred_rows = _common.run_acquisition(
         args, form, gp_features, train_df, global_best_params, fit_grid, heldout_metric
     )
+
+    pareto_diag = None
+    if supports_C and df_pred is not None:
+        pareto_diag = _compute_pareto_membership_diagnostics(
+            train_df.loc[acquired_idx], df_pred, _global_df
+        )
+        _print_pareto_membership_diagnostics(pareto_diag)
 
     # --- report + save + plot ---
     print(f"{'-'*30}")
@@ -168,11 +248,16 @@ def run(args):
     print(f"{'-'*30}")
     print("Run done!")
 
-    output_dir = Path(args.output_dir) / f"seed_{args.seed}"
+    output_dir = _common.allocate_run_output_dir(args)
     output_dir.mkdir(parents=True, exist_ok=True)
+    _common.save_run_args(args, output_dir)
     history_df = pd.DataFrame(history)
-    history_df.to_parquet(output_dir / f"{args.filename}.parquet", index=False)
-    print(f"Saved history to {output_dir / f'{args.filename}.parquet'}")
+    history_path = output_dir / "history.parquet"
+    history_df.to_parquet(history_path, index=False)
+    print(f"Saved history to {history_path}")
+    _common.save_surrogate_predictions(surrogate_pred_rows, output_dir)
+    if pareto_diag is not None:
+        _save_pareto_membership(pareto_diag, output_dir)
 
     if args.plot_figure:
         _plot(args, form, supports_C, history_df, interp_names, train_df, acquired_idx,
@@ -216,7 +301,7 @@ def _plot(args, form, supports_C, history_df, interp_names, train_df, acquired_i
     if supports_C:
         obs_df = train_df.loc[acquired_idx]
         ax.scatter(
-            obs_df.C, obs_df.loss, marker="o", color="black", s=20, alpha=0.3, zorder=2,
+            obs_df.C, obs_df.loss, marker="o", color="black", s=5, alpha=0.3, zorder=2,
             label="observed all points"
         )
         real_params, _ = build_fit(obs_df, form_name=args.form, fit_quality=args.fit_quality)
@@ -260,4 +345,4 @@ def _plot(args, form, supports_C, history_df, interp_names, train_df, acquired_i
     else:
         ax.axis("off")  # width_depth: no compute axis to plot against
 
-    _common.save_panels(fig, flat_axes, panel_idx, output_dir / f"{args.filename}.png")
+    _common.save_panels(fig, flat_axes, panel_idx, output_dir / "figure.png")

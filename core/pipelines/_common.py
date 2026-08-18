@@ -9,7 +9,12 @@ log regret/MSE -- and differ only in two callbacks:
 - ``heldout_metric(params) -> dict``: task-specific held-out fields merged into each history row
   (e.g. loss_law's known_test_mse + L-vs-C curves; hp_law's optimal-HP MSE).
 """
+import json
+import sys
 import warnings
+from argparse import Namespace
+from datetime import datetime, timezone
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -135,8 +140,9 @@ def run_acquisition(args, form, gp_features, train_df, global_best_params, fit_g
     """The shared acquisition loop.
 
     ``fit_grid(df_pred)`` extracts + fits (task-specific); ``heldout_metric(params)`` returns extra
-    per-iteration history fields (task-specific). Returns ``(history, incumbents, interp_names,
-    df_pred, acquired_idx)`` -- the last two for the caller's plotting.
+    per-iteration history fields (task-specific). Returns
+    ``(history, incumbents, interp_names, df_pred, acquired_idx, surrogate_pred_rows)`` -- the
+    last three for the caller's plotting / sidecar saves.
     """
     if args.niters is None and args.C_budget is None:
         raise ValueError("Either --niters or --C_budget must be specified.")
@@ -163,6 +169,7 @@ def run_acquisition(args, form, gp_features, train_df, global_best_params, fit_g
 
     history = []
     df_pred = None
+    surrogate_pred_rows = []
     interp_names = list(form.interpretable(global_best_params).keys())
     incumbents = {name: np.inf for name in interp_names}
     # incumbent parametric fit (lowest in-data fit loss), used to warm-start the GP mean
@@ -225,6 +232,16 @@ def run_acquisition(args, form, gp_features, train_df, global_best_params, fit_g
             model_type=args.model_type,
             **_gp_kwargs(),
         )
+        if args.model_type != "none" and len(remaining_idx) > 0:
+            pred_flat = np.asarray(pred_y, dtype=float).reshape(-1)
+            true_y = train_df.loc[remaining_idx, y_target].to_numpy(dtype=float)
+            for idx, pred, true in zip(remaining_idx, pred_flat, true_y, strict=True):
+                surrogate_pred_rows.append({
+                    "iter": iter_idx,
+                    "idx": int(idx),
+                    "pred_loss": float(pred),
+                    "true_loss": float(true),
+                })
         # true loss where observed, predicted loss elsewhere, then fit the mixed data.
         # NaN predictions (model-free) drop out, leaving the observed-only fit.
         df_pred = train_df.copy()
@@ -233,7 +250,7 @@ def run_acquisition(args, form, gp_features, train_df, global_best_params, fit_g
         best_params, best_loss = fit_grid(df_pred)
         if best_loss < _best_fit_loss:  # incumbent by in-data fit loss, for GP mean warm-start
             _best_fit_loss, _best_fit_params = best_loss, best_params
-        print(f"#Iteration {iter_idx} on {observations.shape[0]} points: Fitting loss={best_loss:2.2e}", end="; ")
+        print(f"#Iteration {iter_idx} on {observations.shape[0]} obs + {len(remaining_idx)} fant: Fitting loss={best_loss:2.2e}", end="; ")
         print_fit_results(form, best_params)
 
         # regrets in interpretable space; irreducible-loss-like terms (form.signed_params) keep sign
@@ -244,19 +261,39 @@ def run_acquisition(args, form, gp_features, train_df, global_best_params, fit_g
             else abs(interp[name] - global_interp[name])
             for name in interp_names
         }
+        
+        if args.model_type == "none":
+            # model-free: no infill, so obs-only fit equals obs+fant fit
+            obs_only_params, obs_only_best_loss = best_params, best_loss
+            obs_only_regrets = regrets
+        else:
+            obs_only_params, obs_only_best_loss = fit_grid(observations)
+            obs_only_interp = form.interpretable(obs_only_params)
+            obs_only_regrets = {
+                name: (obs_only_interp[name] - global_interp[name]) if name in form.signed_params
+                else abs(obs_only_interp[name] - global_interp[name])
+                for name in interp_names
+            }
+            print(f"Fit on {observations.shape[0]} obs only: Fitting loss={obs_only_best_loss:2.2e}", end="; ")
+            print_fit_results(form, obs_only_params)
 
         history.append({
             "iter": iter_idx,
             "n_acquired": len(acquired_idx),
-            "acquired_idx": int(new_idx),
+            "acquired_idx": list(acquired_idx),
+            "new_idx": int(new_idx),
+            "C_lim": float(C_lim),
             "iter_compute": float(iter_compute),
             "total_compute_spent": float(total_compute_spent),
             "heldout_mse": float(heldout_mse),
             "heldout_size": len(remaining_idx),
             **heldout_metric(best_params),
-            "params": list(best_params),
+            "params": list(best_params), # obs+fant params at iteration i, not incumbent!
             "fit_loss": float(best_loss),
+            "obs_only_params": list(obs_only_params),
+            "obs_only_fit_loss": float(obs_only_best_loss),
             **{f"regret_{name}": float(regrets[name]) for name in interp_names},
+            **{f"regret_obs_only_{name}": float(obs_only_regrets[name]) for name in interp_names},
         })
         # updating incumbent tracker
         # signed params: incumbent is the value closest to zero, sign preserved; others: plain min
@@ -274,13 +311,15 @@ def run_acquisition(args, form, gp_features, train_df, global_best_params, fit_g
         tag = " (signed)" if name in form.signed_params else ""
         print(f"{name}{tag}: {incumbents[name]:.4f}")
     print(f"{'='*30}")
-    return history, incumbents, interp_names, df_pred, acquired_idx
+    return history, incumbents, interp_names, df_pred, acquired_idx, surrogate_pred_rows
 
 
 # --- shared plotting helpers (both tasks lay out a grid of per-param regret panels) ---
 
 def plot_regret_panels(flat_axes, start_idx, history_df, form, interp_names):
-    """Draw one incumbent-regret panel per interpretable param; return the next free panel index.
+    """
+    Draw one incumbent-regret panel per interpretable param, plotting both
+    'regret_{name}' and 'regret_obs_only_{name}' in the same panel. Returns the next free panel index.
 
     Signed params (irreducible-loss-like) track the running value closest to zero with sign
     preserved (matches the printed incumbents); others track the running minimum on a log axis.
@@ -289,6 +328,12 @@ def plot_regret_panels(flat_axes, start_idx, history_df, form, interp_names):
     for name in interp_names:
         ax = flat_axes[idx]
         col = f"regret_{name}"
+        
+        obs_only_col = f"regret_obs_only_{name}"
+        color_main = "red"
+        color_obs_only = "tab:green"
+
+        # Plot primary regret line
         if name in form.signed_params:
             vals = history_df[col].to_numpy()
             signed_running, best = [], vals[0]
@@ -296,16 +341,123 @@ def plot_regret_panels(flat_axes, start_idx, history_df, form, interp_names):
                 if abs(v) < abs(best):
                     best = v
                 signed_running.append(best)
-            ax.plot(history_df["iter"], signed_running)
+            ax.plot(history_df["iter"], signed_running, label=f"obs+fant regret {name}", color=color_main)
             ax.axhline(0, color="gray", lw=0.5)
-            ax.set_title(f"incumbent regret {name} (signed)")
+            title = f"incumbent regret {name} (signed)"
         else:
-            ax.plot(history_df["iter"], np.minimum.accumulate(history_df[col]))
+            vals = history_df[col].to_numpy()
+            running_min = np.minimum.accumulate(vals)
+            ax.plot(history_df["iter"], running_min, label=f"obs+fant regret {name}", color=color_main)
             ax.set_yscale("log")
-            ax.set_title(f"incumbent regret {name}")
+            title = f"incumbent regret {name}"
+
+        # Plot obs_only regret line if present
+        if obs_only_col in history_df.columns:
+            obs_vals = history_df[obs_only_col].to_numpy()
+            if name in form.signed_params:
+                signed_running_obs, best_obs = [], obs_vals[0]
+                for v in obs_vals:
+                    if abs(v) < abs(best_obs):
+                        best_obs = v
+                    signed_running_obs.append(best_obs)
+                ax.plot(history_df["iter"], signed_running_obs, label=f"obs only regret {name}", color=color_obs_only)
+            else:
+                running_min_obs = np.minimum.accumulate(obs_vals)
+                ax.plot(history_df["iter"], running_min_obs, label=f"obs only regret {name}", color=color_obs_only)
+        
         ax.set_xlabel("Samples")
+        ax.set_title(title)
+        ax.legend(fontsize=9)
+
         idx += 1
     return idx
+
+
+def dataset_name_from_input(input_path: str) -> str:
+    """Basename of the input CSV without extension (e.g. ``.../oellm_english.csv`` -> ``oellm_english``)."""
+    return Path(input_path).stem
+
+
+def run_experiment_dir(args) -> Path:
+    """Top-level directory for one ``--filename`` experiment."""
+    return Path(args.output_dir) / args.filename
+
+
+def run_seed_dir(args) -> Path:
+    """Directory for all timestamped runs sharing filename, dataset, form, and seed."""
+    return (
+        run_experiment_dir(args)
+        / dataset_name_from_input(args.input)
+        / args.form
+        / f"seed_{args.seed}"
+    )
+
+
+def _new_run_timestamp(seed_dir: Path) -> str:
+    """UTC timestamp label for a new run under ``seed_dir``."""
+    ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+    while (seed_dir / ts).exists():
+        ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S_%f")
+    return ts
+
+
+def allocate_run_output_dir(args) -> Path:
+    """Pick a run directory: ``{filename}/{dataset}/{form}/seed_{seed}/{timestamp}/``."""
+    seed_dir = run_seed_dir(args)
+    run_ts = _new_run_timestamp(seed_dir)
+    run_dir = seed_dir / run_ts
+    print(f"Writing run to {run_dir}/")
+    return run_dir
+
+
+def find_latest_run_dir(args) -> Path | None:
+    """Most recent timestamped run for this filename/dataset/form/seed combo."""
+    seed_dir = run_seed_dir(args)
+    if not seed_dir.is_dir():
+        return None
+    matches = [p for p in seed_dir.iterdir() if p.is_dir()]
+    if not matches:
+        return None
+    return max(matches, key=lambda p: p.stat().st_mtime)
+
+
+def _namespace_to_json(args: Namespace) -> dict:
+    out = {}
+    for k, v in vars(args).items():
+        if isinstance(v, Path):
+            out[k] = str(v)
+        elif isinstance(v, (list, tuple)):
+            out[k] = list(v)
+        else:
+            out[k] = v
+    return out
+
+
+def save_surrogate_predictions(rows, output_dir: Path) -> None:
+    """Write unacquired-grid surrogate predictions (long format: iter, idx, pred/true loss)."""
+    if not rows:
+        return
+    path = output_dir / "surrogate_predictions.parquet"
+    pd.DataFrame(rows).to_parquet(path, index=False)
+    print(f"Saved surrogate predictions to {path}")
+
+
+def save_run_args(args, output_dir: Path) -> None:
+    """Write the parsed CLI args (and raw argv) for reproducibility."""
+    payload = {
+        "task": args.task,
+        "argv": sys.argv,
+        "args": _namespace_to_json(args),
+        "run_dir": str(output_dir),
+        "experiment_dir": str(run_experiment_dir(args)),
+        "seed_dir": str(output_dir.parent),
+        "experiment_name": args.filename,
+        "run_timestamp": output_dir.name,
+        "saved_at": datetime.now(timezone.utc).isoformat(),
+    }
+    path = output_dir / "args.json"
+    path.write_text(json.dumps(payload, indent=2, sort_keys=True))
+    print(f"Saved args to {path}")
 
 
 def save_panels(fig, flat_axes, panel_idx, path):

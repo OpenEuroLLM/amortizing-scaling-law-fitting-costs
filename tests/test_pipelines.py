@@ -34,8 +34,13 @@ class TestPipelinesSmoke(unittest.TestCase):
             proc = subprocess.run(cmd, cwd=REPO_ROOT, capture_output=True, text=True)
             self.assertEqual(proc.returncode, 0, msg=f"{task} failed:\n{proc.stderr[-2000:]}")
 
-            hist_path = out / "seed_0" / "history.parquet"
+            seed_dir = out / "history" / "grid" / form / "seed_0"
+            self.assertTrue(seed_dir.is_dir(), f"{task} wrote no seed dir")
+            run_dir = max(seed_dir.iterdir(), key=lambda p: p.stat().st_mtime)
+            hist_path = run_dir / "history.parquet"
+            args_path = run_dir / "args.json"
             self.assertTrue(hist_path.exists(), f"{task} wrote no history parquet")
+            self.assertTrue(args_path.exists(), f"{task} wrote no args.json")
             hist = pd.read_parquet(hist_path)
             self.assertGreater(len(hist), 0)
             # every acquisition row carries the two-region eval scores + the fitted params

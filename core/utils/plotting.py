@@ -126,6 +126,10 @@ def run_experiments(experiments, grid, seeds, *, out_dir, task="loss_law",
     ``feature_set``, ``form``). Seeds whose driver run fails (a pre-existing fit fragility) are skipped
     with a warning; a config with no surviving seed raises.
     """
+    from argparse import Namespace
+
+    from core.pipelines._common import find_latest_run_dir
+
     driver = REPO / "main.py"
     out_dir = Path(out_dir)
     results = {}
@@ -141,8 +145,16 @@ def run_experiments(experiments, grid, seeds, *, out_dir, task="loss_law",
             for k, v in flags.items():
                 cmd += [f"--{k}", str(v)]
             r = subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            parquet = out / f"seed_{s}" / "h.parquet"
-            if r.returncode == 0 and parquet.exists():
+            run_args = Namespace(
+                output_dir=str(out),
+                input=str(grid),
+                form=flags["form"],
+                seed=s,
+                filename="h",
+            )
+            run_dir = find_latest_run_dir(run_args)
+            parquet = run_dir / "history.parquet" if run_dir else None
+            if r.returncode == 0 and parquet is not None and parquet.exists():
                 hists.append(pd.read_parquet(parquet))
             else:
                 print(f"  [skip] {label} seed {s}: driver failed (parametric fit returned None)")
