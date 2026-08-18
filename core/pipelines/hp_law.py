@@ -115,7 +115,7 @@ def run(args):
         }
 
     # --- acquisition loop ---
-    history, incumbents, interp_names, df_pred, acquired_idx = _common.run_acquisition(
+    history, incumbents, interp_names, df_pred, acquired_idx, surrogate_pred_rows = _common.run_acquisition(
         args, form, gp_features, train_df, global_best_params, fit_grid, heldout_metric
     )
 
@@ -135,6 +135,7 @@ def run(args):
     history_path = output_dir / "history.parquet"
     history_df.to_parquet(history_path, index=False)
     print(f"Saved history to {history_path}")
+    _common.save_surrogate_predictions(surrogate_pred_rows, output_dir)
 
     if args.plot_figure:
         _plot(args, form, history_df, interp_names, df_pred, test_opt,

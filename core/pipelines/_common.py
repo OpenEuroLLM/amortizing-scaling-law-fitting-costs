@@ -140,8 +140,9 @@ def run_acquisition(args, form, gp_features, train_df, global_best_params, fit_g
     """The shared acquisition loop.
 
     ``fit_grid(df_pred)`` extracts + fits (task-specific); ``heldout_metric(params)`` returns extra
-    per-iteration history fields (task-specific). Returns ``(history, incumbents, interp_names,
-    df_pred, acquired_idx)`` -- the last two for the caller's plotting.
+    per-iteration history fields (task-specific). Returns
+    ``(history, incumbents, interp_names, df_pred, acquired_idx, surrogate_pred_rows)`` -- the
+    last three for the caller's plotting / sidecar saves.
     """
     if args.niters is None and args.C_budget is None:
         raise ValueError("Either --niters or --C_budget must be specified.")
@@ -168,6 +169,7 @@ def run_acquisition(args, form, gp_features, train_df, global_best_params, fit_g
 
     history = []
     df_pred = None
+    surrogate_pred_rows = []
     interp_names = list(form.interpretable(global_best_params).keys())
     incumbents = {name: np.inf for name in interp_names}
     # incumbent parametric fit (lowest in-data fit loss), used to warm-start the GP mean
@@ -230,6 +232,16 @@ def run_acquisition(args, form, gp_features, train_df, global_best_params, fit_g
             model_type=args.model_type,
             **_gp_kwargs(),
         )
+        if args.model_type != "none" and len(remaining_idx) > 0:
+            pred_flat = np.asarray(pred_y, dtype=float).reshape(-1)
+            true_y = train_df.loc[remaining_idx, y_target].to_numpy(dtype=float)
+            for idx, pred, true in zip(remaining_idx, pred_flat, true_y, strict=True):
+                surrogate_pred_rows.append({
+                    "iter": iter_idx,
+                    "idx": int(idx),
+                    "pred_loss": float(pred),
+                    "true_loss": float(true),
+                })
         # true loss where observed, predicted loss elsewhere, then fit the mixed data.
         # NaN predictions (model-free) drop out, leaving the observed-only fit.
         df_pred = train_df.copy()
@@ -299,7 +311,7 @@ def run_acquisition(args, form, gp_features, train_df, global_best_params, fit_g
         tag = " (signed)" if name in form.signed_params else ""
         print(f"{name}{tag}: {incumbents[name]:.4f}")
     print(f"{'='*30}")
-    return history, incumbents, interp_names, df_pred, acquired_idx
+    return history, incumbents, interp_names, df_pred, acquired_idx, surrogate_pred_rows
 
 
 # --- shared plotting helpers (both tasks lay out a grid of per-param regret panels) ---
@@ -419,6 +431,15 @@ def _namespace_to_json(args: Namespace) -> dict:
         else:
             out[k] = v
     return out
+
+
+def save_surrogate_predictions(rows, output_dir: Path) -> None:
+    """Write unacquired-grid surrogate predictions (long format: iter, idx, pred/true loss)."""
+    if not rows:
+        return
+    path = output_dir / "surrogate_predictions.parquet"
+    pd.DataFrame(rows).to_parquet(path, index=False)
+    print(f"Saved surrogate predictions to {path}")
 
 
 def save_run_args(args, output_dir: Path) -> None:
