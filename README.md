@@ -175,6 +175,7 @@ A CSV with at least these columns:
 | `none` | `NullSurrogate` | No surrogate (model-free): fit `L(C)` directly on the observed compute-optimal points |
 | `gp` | `GPModel` | BoTorch + GPyTorch (Matérn kernel, ARD) |
 | `tabpfn` | `TabPFNModel` | TabPFN |
+| `tabpfn_ens` | `TabPFNEnsembleModel` | Seed-bagged TabPFN ensemble (uncertainty from member spread) |
 | `ag` | `AutoGluonModel` | AutoGluon TabularPredictor |
 | `xgb_ens` | `XGBoostEnsembleModel` | Bootstrap-bagged XGBoost ensemble (uncertainty from member spread) |
 

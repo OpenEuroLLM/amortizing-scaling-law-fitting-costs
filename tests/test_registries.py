@@ -51,7 +51,7 @@ class TestSurrogateRegistry(unittest.TestCase):
     def test_expected_models_present(self):
         self.assertEqual(
             set(MODELS),
-            {"none", "gp", "tabpfn", "ag", "xgb_ens"},
+            {"none", "gp", "tabpfn", "tabpfn_ens", "ag", "xgb_ens"},
         )
 
     def test_null_surrogate_predicts_nan(self):
