@@ -25,6 +25,9 @@ gp = [
 xgb = [
     "xgboost>=2.0",
 ]
+tabpfn = [
+    "tabpfn>=2.0",
+]
 dev = [
     "pytest>=8.0",
 ]
