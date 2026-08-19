@@ -1,15 +1,15 @@
 # Surrogate-Based Scaling Laws
 
-Fits neural scaling laws (loss vs. compute) using a surrogate model trained on a subset of observed runs, rather than requiring all runs to be evaluated.
+Fits neural scaling laws using a chosen acquisition function and a surrogate model trained on a subset of observed runs, rather than requiring all runs to be evaluated.
 
 ## Overview
 
-A standard scaling law study sweeps many combinations of model size `N`, dataset size `D`, learning rate `lr`, and batch size `gbsz`, then fits a power law `L(C) = A * C^(-alpha)` to the Pareto-optimal (loss envelope) points. Running every combination is expensive. This repo instead:
+A standard scaling law study sweeps many combinations of model size `N`, dataset size `D`, learning rate `lr`, and batch size `gbsz`, then fits a power law, for example `L(C) = A * C^(-alpha)` to the Pareto-optimal (loss envelope) points. Running every combination is expensive. This repo instead:
 
-1. Trains a **surrogate model** on a small sampled subset of runs (in log-space over `N`, `D`, `lr`, `gbsz`).
-2. Uses the surrogate to **predict loss** for all configurations cheaply.
-3. Extracts the **Pareto frontier** (best loss per compute budget `C = 6ND`) from the predictions.
-4. Fits a **power law** to the envelope and reports `A` and `alpha`.
+1. Iterativel acquires new points given a maximum compute budget.
+2. Trains a **surrogate model** on the acquired set of runs (in log-space over `N`, `D`, `lr`, `gbsz`).
+3. Uses a surrogate to **predict loss** for all unacquired configurations cheaply.
+4. Fits a **scaling law** (e.g. $L(C)$)and reports its coefficient (in the case of $L(C)$, `A` and `alpha`).
 
 ## Layout
 
@@ -46,7 +46,7 @@ python main.py loss_law \
     --seed 12345 \
     --niters 25 \
     --output_dir results/iterative/ \
-    --input data/all_points_clean.csv \
+    --input data/oellm_english/preprocessed/oellm_english.csv \
     --init_points 25 \
     --init_compute_factor 50 \
     --C_window 0.1 50 \
@@ -71,7 +71,7 @@ uv run python preprocessing/preprocess.py    # -> data/<source>/preprocessed/<da
 | `gemstones` | McLeish et al., arXiv:2502.06857 | no |
 | `warmstart` | Mallik et al., arXiv:2605.13405 | yes |
 
-Sources with no `lr`/`gbsz` in the underlying data leave those columns blank -- usable with `fit_scaling_laws_loss_vs_compute.py` but not `model_based_fits.py`/`iterative_fits_L0_form.py`, which need all four features. Conversely, a source having `lr`/`gbsz` columns doesn't by itself mean they were swept -- some sources fix `lr`/`gbsz` and only vary `N`/`D`, so the resulting dataset isn't necessarily usable for fitting an (lr, gbsz) scaling law; check the dataset's own README for whether it was actually varied.
+Sources with no `lr`/`gbsz` in the underlying data leave those columns blank.  -- usable with `loss_law` but not `loss_hp`, which need all four features. Conversely, a source having `lr`/`gbsz` columns doesn't by itself mean they were swept -- some sources fix `lr`/`gbsz` and only vary `N`/`D`, so the resulting dataset isn't necessarily usable for fitting an (lr, gbsz) scaling law; check the dataset's own README for whether it was actually varied.
 
 ### N-variant vocabulary
 
@@ -90,7 +90,7 @@ Recovers a **loss** scaling law (`L` vs compute / `N,D`) via the acquisition loo
 
 ```bash
 python main.py loss_law \
-    --input        path/to/all_points_clean.csv \
+    --input        data/oellm_english/preprocessed/oellm_english.csv \
     --output_dir   results/ \
     --niters       50 \          # acquisition iterations (or use --C_budget for a compute budget)
     --seed         1 \
@@ -125,7 +125,7 @@ The step-law forms fit the **optimal hyperparameter** as a function of scale, no
 
 ```bash
 python main.py hp_law \
-    --input        path/to/steplaw.csv \
+    --input        data/steplaw/preprocessed/steplaw_dense.csv \
     --output_dir   results/ \
     --form         steplaw_lr \   # steplaw_lr (optimal lr vs N,D) | steplaw_bsz (optimal batch size vs D)
     --held_out_frac 0.2 \         # largest fraction of scales held out (extrapolation eval)
@@ -138,7 +138,7 @@ It reduces the grid to the optimal HP **per scale** (min-loss row at each `N,D` 
 
 ```bash
 python -m extra.one_shot_fit \
-    --input      path/to/all_points_clean.csv \
+    --input      data/oellm_english/preprocessed/oellm_english.csv \
     --output_dir results/ \
     --num_points 50 \          # absolute number of training runs
     --seed       1 \
