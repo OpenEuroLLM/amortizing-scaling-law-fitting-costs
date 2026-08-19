@@ -4,12 +4,12 @@ Fits neural scaling laws using a chosen acquisition function and a surrogate mod
 
 ## Overview
 
-A standard scaling law study sweeps many combinations of model size `N`, dataset size `D`, learning rate `lr`, and batch size `gbsz`, then fits a power law, for example `L(C) = A * C^(-alpha)` to the Pareto-optimal (loss envelope) points. Running every combination is expensive. This repo instead:
+A standard scaling law study sweeps many combinations of model size `N`, dataset size `D`, learning rate `lr`, and batch size `gbsz`, then fits a power law, for example `L(C) = L0 + A * C^(-alpha)` to the Pareto-optimal (loss envelope) points. Running every combination is expensive. This repo instead:
 
 1. Iterativel acquires new points given a maximum compute budget.
 2. Trains a **surrogate model** on the acquired set of runs (in log-space over `N`, `D`, `lr`, `gbsz`).
 3. Uses a surrogate to **predict loss** for all unacquired configurations cheaply.
-4. Fits a **scaling law** (e.g. $L(C)$)and reports its coefficient (in the case of $L(C)$, `A` and `alpha`).
+4. Fits a **scaling law**, e.g. $L(C)$ and reports its coefficients; in the case of $L(C)$: `L0`, `A` and `alpha`.
 
 ## Layout
 
