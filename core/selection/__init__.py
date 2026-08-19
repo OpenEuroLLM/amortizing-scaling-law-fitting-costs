@@ -12,7 +12,7 @@ from .max_variance import MaxVarianceSelection
 from .farthest_point import FarthestPointSelection
 from .local_search import LocalSearch
 from .successive_halving import SuccessiveHalving, SuccessiveHalvingGP, _sh_schedule
-from .ei import EISelection, EIPerCostSelection
+from .ei import EISelection, EIPerCostSelection, PISelection, LCBSelection
 
 SELECTION = {
     "random": RandomSelection,
@@ -21,6 +21,8 @@ SELECTION = {
     "farthest_point": FarthestPointSelection,
     "ei": EISelection,
     "ei_per_cost": EIPerCostSelection,
+    "pi": PISelection,
+    "lcb": LCBSelection,
 }
 
 __all__ = [
@@ -36,4 +38,6 @@ __all__ = [
     "SELECTION",
     "EISelection",
     "EIPerCostSelection",
+    "PISelection",
+    "LCBSelection",
 ]

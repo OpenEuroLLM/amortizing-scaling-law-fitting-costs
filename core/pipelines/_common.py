@@ -96,6 +96,11 @@ def add_acquisition_args(parser):
     )
     parser.add_argument('--selection', type=str, default='random', choices=list(SELECTION))
     parser.add_argument(
+        '--lcb_kappa', type=float, default=2.0,
+        help="LCB exploration weight (mu - kappa*sigma). Only used by --selection lcb. "
+        "Typical 1-3; larger => more exploratory."
+    )
+    parser.add_argument(
         '--feature_set', type=str, default='default', choices=list(FEATURE_SETS),
         help="Which features the GP/Model conditions on. 'default': N, D, lr, gbsz. 'arch': + the "
         "architectural HPs (width, depth, ffn, num_heads). 'data': + the data-axis HPs "
@@ -169,7 +174,8 @@ def run_acquisition(args, form, gp_features, train_df, global_best_params, fit_g
     n_iters = args.init_points + (args.niters or (MAX_ITERS - args.init_points))
 
     seed_everything(args.seed)
-    splitter = SELECTION[args.selection](seed=args.seed)
+    sel_kwargs = {"kappa": args.lcb_kappa} if args.selection == "lcb" else {}
+    splitter = SELECTION[args.selection](seed=args.seed, **sel_kwargs)
     if args.model_type == "none" and getattr(splitter, "needs_surrogate", False):
         raise ValueError(
             f"--model_type none (model-free) is incompatible with surrogate-based selection "
