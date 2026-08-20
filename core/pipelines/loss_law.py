@@ -135,7 +135,7 @@ def add_args(parser):
         "fraction by this axis is the held-out (extrapolation) region. Default 'C'."
     )
     parser.add_argument(
-        '--max_frac', type=float, default=0.5,
+        '--held_out_frac', type=float, default=0.5,
         help="Fraction of --split_axis's max value that is used as the threshold for "
         "extrapolation eval set. Everything below the threshold is the acquire-able pool, on which "
         "the in-region (interpolation) recovery is scored. Default 0.5."
@@ -146,7 +146,7 @@ def run(args):
     # --- data + two-way fraction split (acquire-able pool / held-out) ---
     df, gp_features = _common.prepare_data(args)
     pool_df, held_out_df = split_search_space(
-        df, max_frac=args.max_frac, axis=args.split_axis
+        df, held_out_frac=args.held_out_frac, axis=args.split_axis
     )
     train_df = pool_df                        # the loop acquires only from the pool
     test_df_known = held_out_df
