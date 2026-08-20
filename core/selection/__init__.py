@@ -13,6 +13,7 @@ from .farthest_point import FarthestPointSelection
 from .local_search import LocalSearch
 from .successive_halving import SuccessiveHalving, SuccessiveHalvingGP, _sh_schedule
 from .ei import EISelection, EIPerCostSelection
+from .tabpfn_ei import TabPFNEISelection
 
 SELECTION = {
     "random": RandomSelection,
@@ -21,6 +22,7 @@ SELECTION = {
     "farthest_point": FarthestPointSelection,
     "ei": EISelection,
     "ei_per_cost": EIPerCostSelection,
+    "tabpfn_ei": TabPFNEISelection,
 }
 
 __all__ = [
@@ -36,4 +38,5 @@ __all__ = [
     "SELECTION",
     "EISelection",
     "EIPerCostSelection",
+    "TabPFNEISelection",
 ]
