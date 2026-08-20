@@ -67,6 +67,13 @@ def add_acquisition_args(parser):
         help="Factor to multiply the minimum compute cost to set the initial envelope for sampling."
     )
     parser.add_argument(
+        '--init_practice', action='store_true',
+        help="Practice-style init: at the smallest N, observe the full HP grid for the k smallest "
+        "D values (k=min(--init_points, #Ds)) in the acquisition loop; init_points_idx keeps "
+        "one best-HP row per D for reference. Init compute is the sum of C over the full grid. "
+        "Sets C_lim to max C in that grid. Default init samples randomly under the envelope."
+    )
+    parser.add_argument(
         '--C_window', type=float, nargs=2, default=[1e-3, 1e3], metavar=('LO', 'HI'),
         help="Factors on the max. seen compute to determine permissible range for sampling."
     )
@@ -136,6 +143,45 @@ def prepare_data(args):
     return df, gp_features
 
 
+def _init_acquired_idx_default(train_df, init_points, rng, C_lim, C_window):
+    """Random init: sample ``init_points`` rows from the pool under the compute envelope."""
+    pool = next_batch_compute(train_df, acquired_idx=None, C_max=C_lim, C_window=C_window)
+    if len(pool) < init_points:
+        raise ValueError(
+            f"Init pool has {len(pool)} rows but --init_points={init_points}; "
+            "widen --C_window or lower --init_points."
+        )
+    return pd.Index(rng.choice(pool.index, init_points, replace=False))
+
+
+def _init_acquired_idx_practice(train_df, init_points, y_target):
+    """Practice-style init: best HP (min loss) at smallest N for the k smallest D values.
+
+    Returns ``(acquired_idx, practice_idx)`` where ``acquired_idx`` is one best-HP row per D
+    (used for fitting) and ``practice_idx`` is every row at (min N, selected Ds) — the full
+    dense HP grid whose compute is counted toward ``total_compute_spent``.
+    """
+    needed = {"N", "D", y_target, "C"}
+    missing = needed - set(train_df.columns)
+    if missing:
+        raise ValueError(f"--init_practice requires columns {sorted(needed)} on the acquire pool; missing {sorted(missing)}.")
+    min_N = train_df["N"].min()
+    candidates = train_df[train_df["N"] == min_N]
+    if candidates.empty:
+        raise ValueError(f"--init_practice: no rows at min N={min_N}.")
+    k = min(init_points, candidates["D"].nunique())
+    smallest_Ds = np.sort(candidates["D"].unique())[:k]
+    best_rows = []
+    for d in smallest_Ds:
+        subset = candidates[candidates["D"] == d]
+        if not subset.empty:
+            best_rows.append(subset[y_target].idxmin())
+    if not best_rows:
+        raise ValueError("--init_practice: found no initial points.")
+    practice_idx = candidates[candidates["D"].isin(smallest_Ds)].index
+    return pd.Index(best_rows), practice_idx
+
+
 def run_acquisition(args, form, gp_features, train_df, global_best_params, fit_grid, heldout_metric):
     """The shared acquisition loop.
 
@@ -148,7 +194,6 @@ def run_acquisition(args, form, gp_features, train_df, global_best_params, fit_g
         raise ValueError("Either --niters or --C_budget must be specified.")
     if args.niters is not None and args.C_budget is not None:
         raise ValueError("Only one of --niters or --C_budget can be specified.")
-    n_iters = args.init_points + (args.niters or (MAX_ITERS - args.init_points))
 
     splitter = SELECTION[args.selection](seed=args.seed)
     if args.model_type == "none" and getattr(splitter, "needs_surrogate", False):
@@ -158,14 +203,39 @@ def run_acquisition(args, form, gp_features, train_df, global_best_params, fit_g
             f"e.g. --selection random."
         )
     rng = np.random.RandomState(args.seed)
-
-    # initialization: seed with the cheapest point, then fill up to init_points under the envelope
-    C_lim = train_df.C.min() * args.init_compute_factor
-    pool = next_batch_compute(train_df, acquired_idx=None, C_max=C_lim, C_window=args.C_window)
-    acquired_idx = pd.Index(rng.choice(pool.index, args.init_points, replace=False))
-    init_points_idx = acquired_idx.copy()
-    total_compute_spent = train_df.loc[acquired_idx, "C"].sum()
     y_target = args.y_target
+
+    init_best_hp_idx = None
+
+    if args.init_practice:
+        init_best_hp_idx, practice_idx = _init_acquired_idx_practice(train_df, args.init_points, y_target)
+        acquired_idx = practice_idx.copy()
+        C_lim = float(train_df.loc[acquired_idx, "C"].max())
+        init_compute = float(train_df.loc[practice_idx, "C"].sum())
+        print(
+            f"Init (practice): {len(init_best_hp_idx)} best-HP picks, {len(practice_idx)} rows in loop "
+            f"(full HP grid at min N={train_df.loc[init_best_hp_idx, 'N'].iloc[0]:.3e}); "
+            f"init compute={init_compute:.2e}, C_lim={C_lim:.2e}"
+        )
+        if len(init_best_hp_idx) < args.init_points:
+            print(
+                f"  (capped at {len(init_best_hp_idx)} D scales at min N; "
+                f"--init_points={args.init_points})"
+            )
+        n_init = len(init_best_hp_idx)
+    else:
+        C_lim = train_df.C.min() * args.init_compute_factor
+        acquired_idx = _init_acquired_idx_default(
+            train_df, args.init_points, rng, C_lim, args.C_window
+        )
+        init_best_hp_idx = acquired_idx.copy()
+        init_compute = float(train_df.loc[acquired_idx, "C"].sum())
+        print(f"Init (default): {len(acquired_idx)} random points under C_lim={C_lim:.2e}")
+        n_init = len(acquired_idx)
+
+    init_points_idx = init_best_hp_idx.copy()
+    n_iters = n_init + (args.niters or (MAX_ITERS - args.init_points))
+    total_compute_spent = init_compute
 
     history = []
     df_pred = None
@@ -181,7 +251,7 @@ def run_acquisition(args, form, gp_features, train_df, global_best_params, fit_g
             mk["init_params"] = _best_fit_params
         return dict(kernel=args.gp_kernel, mean_form=args.gp_mean_form,
                     mean_kwargs=mk, diagnose=args.diagnose_gp)
-    for iter_idx in range(args.init_points, n_iters + 1):
+    for iter_idx in range(n_init, n_iters + 1):
         # budget checks
         if args.C_budget is not None and total_compute_spent >= args.C_budget:
             print(f"\n\n{'=' * 50}\nReached total compute budget of {args.C_budget}. Stopping iterations.\n{'=' * 50}\n")
@@ -206,7 +276,7 @@ def run_acquisition(args, form, gp_features, train_df, global_best_params, fit_g
                 # a kernel must be positive-definite), which happens with few / near-duplicate points.
                 # We fall back to a random pick for this one iteration; warn so that's not silent.
                 warnings.warn(
-                    f"[iter {iter_idx - args.init_points}] selection GP fit failed "
+                    f"[iter {iter_idx - n_init}] selection GP fit failed "
                     f"({type(e).__name__}: {e}); using a RANDOM pick this iteration "
                     f"instead of '{args.selection}'.",
                     RuntimeWarning, stacklevel=2,
