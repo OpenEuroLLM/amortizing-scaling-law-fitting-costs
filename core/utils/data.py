@@ -42,7 +42,7 @@ def split_search_space(
     if not 0 < held_out_frac < 1:
         raise ValueError(f"held_out_frac must be in (0, 1), got {held_out_frac}")
     df = df.copy()
-    if axis == "C" and "C" not in df.columns:
+    if "C" not in df.columns:
         df["C"] = 6.0 * df["N"] * df["D"]
 
     thresh = df[axis].max() * (1.0 - held_out_frac)
