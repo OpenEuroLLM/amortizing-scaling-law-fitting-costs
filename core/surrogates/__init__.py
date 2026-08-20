@@ -8,14 +8,21 @@ import numpy as np
 
 from .base import SurrogateModel, NullSurrogate
 from .gp import GPModel
-from .tabpfn import TabPFNModel
+from .tabpfn import TabPFNEnsembleModel, TabPFNBOModel
 from .autogluon import AutoGluonModel
+from .xgboost import XGBoostEnsembleModel
 
+# Only ensemble variants are exposed for TabPFN / XGBoost -- a single tree model or
+# single TabPFN call gives no usable predictive uncertainty. The one single-model
+# exception is `tabpfn_bo`, which derives a genuine posterior from TabPFN's bar
+# distribution (see TabPFNBOModel) and so is a valid Bayesian-optimization surrogate.
 MODELS = {
     "none": NullSurrogate,
     "gp": GPModel,
-    "tabpfn": TabPFNModel,
+    "tabpfn_ens": TabPFNEnsembleModel,
+    "tabpfn_bo": TabPFNBOModel,
     "ag": AutoGluonModel,
+    "xgb_ens": XGBoostEnsembleModel,
 }
 
 
@@ -45,8 +52,10 @@ __all__ = [
     "SurrogateModel",
     "NullSurrogate",
     "GPModel",
-    "TabPFNModel",
+    "TabPFNEnsembleModel",
+    "TabPFNBOModel",
     "AutoGluonModel",
+    "XGBoostEnsembleModel",
     "MODELS",
     "build_surrogate",
 ]
