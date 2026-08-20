@@ -4,10 +4,13 @@ from .base import SurrogateModel
 
 
 class TabPFNModel(SurrogateModel):
+    def __init__(self, seed: int | None = None, **kwargs):
+        self.seed = seed
+
     def fit(self, train_x: np.ndarray, train_y: np.ndarray, **kwargs) -> None:
         from tabpfn import TabPFNRegressor
 
-        self._reg = TabPFNRegressor()
+        self._reg = TabPFNRegressor(random_state=self.seed)
         self._reg.fit(train_x, train_y)
 
     def predict(self, X_test: np.ndarray) -> np.ndarray:
