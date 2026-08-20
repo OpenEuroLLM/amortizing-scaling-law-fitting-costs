@@ -29,11 +29,13 @@ def split_search_space(
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Split the grid into ``(pool, held_out)`` along a compute/scale axis.
 
-    The **held-out** region is the top ``held_out_frac`` of the grid by ``axis`` (the largest
-    scales -- the extrapolation target, never acquired). Everything below the threshold is the
-    acquire-able **pool**: the loop draws from it, and the fitted law's in-region recovery is
-    scored on it too. ``axis`` is ``"C"`` (compute ``6ND``, added if missing) or ``"N"``. The two
-    frames are disjoint and cover the grid.
+    The **held-out** region is everything with ``axis >= (1 - held_out_frac) * axis.max()`` --
+    the largest scales, the extrapolation target, never acquired. Everything below the threshold
+    is the acquire-able **pool**: the loop draws from it, and the fitted law's in-region recovery
+    is scored on it too. A larger ``held_out_frac`` pulls the threshold down from ``axis.max()``
+    toward ``0``, admitting more of the grid into the held-out region. ``axis`` is ``"C"``
+    (compute ``6ND``, added if missing) or ``"N"``. The two frames are disjoint and cover the
+    grid.
     """
     if axis not in ("C", "N"):
         raise ValueError(f"split axis must be 'C' or 'N', got {axis!r}")
@@ -43,7 +45,7 @@ def split_search_space(
     if axis == "C" and "C" not in df.columns:
         df["C"] = 6.0 * df["N"] * df["D"]
 
-    thresh = df[axis].max() * held_out_frac
+    thresh = df[axis].max() * (1.0 - held_out_frac)
     held_out_df = df[df[axis] >= thresh]
     pool_df = df[df[axis] < thresh]
     if held_out_df.empty or pool_df.empty:
