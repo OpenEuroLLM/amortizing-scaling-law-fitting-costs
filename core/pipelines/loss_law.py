@@ -23,6 +23,8 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+import seaborn as sns
+from matplotlib.lines import Line2D
 
 from scaling.utils import get_pareto_frontier
 
@@ -31,7 +33,7 @@ from core.surrogates import build_surrogate
 from core.forms import PARAMETRIC_FORMS
 from core.fitting import build_fit, print_fit_results
 from core.utils.data import split_search_space
-from core.utils.plotting import set_pub_style
+from core.utils.plotting import set_pub_style, tidy_log_axis, build_N_color_map, FORMAT_N, FORMAT_BILLIONS
 from core.pipelines import _common
 
 # forms this task handles: those that fit `loss` (steplaw_lr/bsz fit an HP -> hp_law task)
@@ -172,7 +174,7 @@ def run(args):
         _global_df, form_name=args.form, y_name="loss", fit_quality=args.fit_quality
     )
     print_fit_results(form, global_best_params)
-    
+
     ### get scaling law parameters from training data all methods should converge to this
     print(f"Fitting parametric form on all of the training data {train_df.shape}...")
 
@@ -181,7 +183,7 @@ def run(args):
         train_df, form_name=args.form, y_name="loss", fit_quality=args.fit_quality
     )
     print_fit_results(form, train_best_params)
-    
+
     # Compute train and held-out pareto frontiers
     combined = pd.concat([train_df, test_df_known])
     global_pareto = get_pareto_frontier(combined, x_name='C', y_name="loss")
@@ -261,15 +263,70 @@ def run(args):
 
     if args.plot_figure:
         _plot(args, form, supports_C, history_df, interp_names, train_df, acquired_idx,
-              held_out_df, C_known, L_known, C_unknown, global_best_params, output_dir)
+              held_out_df, C_known, L_known, C_unknown, df_pred, global_best_params, output_dir)
+
+
+def _plot_ND_fit_panels(ax_D, ax_C, args, form, train_df, acquired_idx, held_out_df, history_df,
+                        df_pred, global_best_params):
+    """Loss-vs-D and loss-vs-FLOPs panels for N,D-input forms (chinchilla3/chinchilla_interaction).
+
+    Points are the optimal (min-loss) row per (N, D) in the fantasized pool (observed where
+    acquired, surrogate-predicted elsewhere -- circles) plus the held-out region (stars), colored by
+    N. Three fits are overlaid as same-color, different-linestyle lines evaluated directly at those
+    (N, D) points: the fit on the acquired points, the fit on the surrogate-fantasized dense grid
+    (skipped for model-free selection), and the full-grid ground truth.
+    """
+    obs_df = train_df.loc[acquired_idx]
+    pool_points = df_pred if df_pred is not None else obs_df  # fantasized dense grid, or obs-only fallback
+    combined = pd.concat([pool_points, held_out_df])
+    df_fit = combined.loc[combined.groupby(["N", "D"])["loss"].idxmin()].copy()
+    df_fit["C"] = 6.0 * df_fit["N"] * df_fit["D"]
+    is_held_out = df_fit.index.isin(held_out_df.index)
+    N_color_map = build_N_color_map(df_fit["N"])
+
+    real_params, _ = build_fit(obs_df, form_name=args.form, fit_quality=args.fit_quality)
+    fits = [(real_params, "--", "acquired points")]
+    if args.model_type != "none":
+        fits.append((np.asarray(history_df.iloc[-1]["params"]), "-", "fantasized dense grid"))
+    fits.append((np.asarray(global_best_params), ":", "ground truth (all data)"))
+
+    X = df_fit[form.input_cols].to_numpy()
+    for x_col, ax, xlabel, label_fn in [("D", ax_D, r"$D$", FORMAT_BILLIONS), ("C", ax_C, "FLOPs", None)]:
+        sns.scatterplot(
+            data=df_fit[~is_held_out], x=x_col, y="loss", hue="N", palette=N_color_map,
+            linewidth=0, edgecolor=None, s=40, ax=ax,
+        )
+        sns.scatterplot(
+            data=df_fit[is_held_out], x=x_col, y="loss", hue="N", palette=N_color_map,
+            marker="*", s=160, linewidth=0.6, edgecolor="black", ax=ax, legend=False,
+        )
+        for params, ls, _ in fits:
+            df_fit["loss_fit"] = form.func(X, params, return_log_loss=False)
+            sns.lineplot(
+                data=df_fit.sort_values(["N", x_col]), x=x_col, y="loss_fit", hue="N",
+                palette=N_color_map, legend=False, linestyle=ls, linewidth=2, ax=ax,
+            )
+        ax.set_xscale("log"); ax.set_yscale("log")
+        ax.set_xlabel(xlabel); ax.set_ylabel(r"$\mathcal{L}_{\mathrm{valid}}$")
+        ax.set_title("Fit")
+        tidy_log_axis(ax, "x", label_fn=label_fn)
+
+        h, l = ax.get_legend_handles_labels()
+        n_legend = ax.legend(h, [FORMAT_N(float(x)) for x in l], title=r"$N$", loc="lower left", fontsize=8)
+        ax.add_artist(n_legend)
+        style_handles = [Line2D([], [], color="black", ls=ls, lw=2, label=lbl) for _, ls, lbl in fits]
+        ax.legend(handles=style_handles, loc="upper right", fontsize=7)
 
 
 def _plot(args, form, supports_C, history_df, interp_names, train_df, acquired_idx,
-          held_out_df, C_known, L_known, C_unknown, global_best_params, output_dir):
+          held_out_df, C_known, L_known, C_unknown, df_pred, global_best_params, output_dir):
     # panels: one regret plot per interpretable param, plus the two-set recovery curve, compute/iter,
-    # and (for L-vs-C forms) the region-shaded fit-comparison plot. Laid out dynamically.
+    # and the fit-comparison plot(s) -- one loss-vs-C panel for L-vs-C forms, or two panels
+    # (loss-vs-D, loss-vs-FLOPs) for N,D-input forms (chinchilla3/chinchilla_interaction), since their
+    # L(N,D) surface isn't naturally indexed by C alone. Laid out dynamically.
     set_pub_style()
-    n_extra_panels = 3  # two-set MSE, compute/iter, fit-comparison (last skipped w/o compute axis)
+    is_ND_form = form.input_cols == ["N", "D"]
+    n_extra_panels = 2 + (2 if is_ND_form else 1)  # two-set MSE, compute/iter, fit-comparison panel(s)
     total_panels = len(interp_names) + n_extra_panels
     ncols = 3
     nrows = int(np.ceil(total_panels / ncols))
@@ -294,55 +351,60 @@ def _plot(args, form, supports_C, history_df, interp_names, train_df, acquired_i
     ax.set_xlabel("Samples"); 
     ax.set_title("compute / iter")
 
-    # fit-comparison panel: real vs fantasized parametric fits as L vs C, with the train/held-out
-    # regions shaded (only for L-vs-C forms)
-    ax = flat_axes[panel_idx]
-    panel_idx += 1
-    if supports_C:
-        obs_df = train_df.loc[acquired_idx]
-        ax.scatter(
-            obs_df.C, obs_df.loss, marker="o", color="black", s=5, alpha=0.3, zorder=2,
-            label="observed all points"
-        )
-        real_params, _ = build_fit(obs_df, form_name=args.form, fit_quality=args.fit_quality)
-        _obs_pareto = get_pareto_frontier(obs_df, x_name="C", y_name="loss")
-        C_split = float(held_out_df["C"].min())          # pool | held-out boundary
-        ax.scatter(
-            _obs_pareto["C"], _obs_pareto["loss"],
-            marker="o", color="black", zorder=3, s=25, label="observed pareto",
-        )
-        ax.scatter(
-            C_known, L_known,
-            marker="x", color="#265ddc", zorder=5, s=25, label="held-out eval"
-        )
-        ax.axvspan(
-            C_split, float(held_out_df["C"].max()),
-            color="#008969", alpha=0.25, lw=0, label="held-out region"
-        )
-        C_grid = np.geomspace(obs_df["C"].min(), C_unknown.max(), 200)
-        seen = C_grid <= obs_df["C"].max()
-        # fit on observed points only; add the surrogate-infilled ("fantasized") fit only when a
-        # surrogate ran -- model-free imputes nothing, so it would duplicate the observed-only curve.
-        curves = [(real_params, "tab:green", "subsampled grid")]
-        if args.model_type != "none":
-            curves.append((history_df.iloc[-1]["params"], "red", "fantasized dense grid"))
-        for params, color, label in curves:
-            L_hat = form.to_L_vs_C(C_grid, np.asarray(params))
-            ax.plot(C_grid[seen], L_hat[seen], color=color, ls="-", label=label)
-            ax.plot(C_grid[~seen], L_hat[~seen], color=color, ls="--")
-        L_global_hat = form.to_L_vs_C(C_grid, np.asarray(global_best_params))
-        ax.plot(C_grid[seen], L_global_hat[seen], color="tab:purple", ls="-.", label="all data fit")
-        ax.plot(C_grid[~seen], L_global_hat[~seen], color="tab:purple", ls="--")
-        ax.set_yscale("log")
-        ax.set_xscale("log")
-        ax.set_xlabel("FLOPs")
-        ax.set_ylabel("loss")
-        ax.legend(fontsize=10, ncol=1)
-        ax.grid(which="both", ls="--", lw=1, alpha=0.5)
-        title = "fit (dashed = beyond seen C)" if args.model_type == "none" else \
-                "real vs fantasized fit (dashed = beyond seen C)"
-        ax.set_title(title)
+    # fit-comparison panel(s): real vs fantasized (vs ground-truth, for N,D forms) parametric fits
+    if is_ND_form:
+        ax_D, ax_C = flat_axes[panel_idx], flat_axes[panel_idx + 1]
+        panel_idx += 2
+        _plot_ND_fit_panels(ax_D, ax_C, args, form, train_df, acquired_idx, held_out_df, history_df,
+                            df_pred, global_best_params)
     else:
-        ax.axis("off")  # width_depth: no compute axis to plot against
+        ax = flat_axes[panel_idx]
+        panel_idx += 1
+        if supports_C:
+            obs_df = train_df.loc[acquired_idx]
+            ax.scatter(
+                obs_df.C, obs_df.loss, marker="o", color="black", s=5, alpha=0.3, zorder=2,
+                label="observed all points"
+            )
+            real_params, _ = build_fit(obs_df, form_name=args.form, fit_quality=args.fit_quality)
+            _obs_pareto = get_pareto_frontier(obs_df, x_name="C", y_name="loss")
+            C_split = float(held_out_df["C"].min())          # pool | held-out boundary
+            ax.scatter(
+                _obs_pareto["C"], _obs_pareto["loss"],
+                marker="o", color="black", zorder=3, s=25, label="observed pareto",
+            )
+            ax.scatter(
+                C_known, L_known,
+                marker="x", color="#265ddc", zorder=5, s=25, label="held-out eval"
+            )
+            ax.axvspan(
+                C_split, float(held_out_df["C"].max()),
+                color="#008969", alpha=0.25, lw=0, label="held-out region"
+            )
+            C_grid = np.geomspace(obs_df["C"].min(), C_unknown.max(), 200)
+            seen = C_grid <= obs_df["C"].max()
+            # fit on observed points only; add the surrogate-infilled ("fantasized") fit only when a
+            # surrogate ran -- model-free imputes nothing, so it would duplicate the observed-only curve.
+            curves = [(real_params, "tab:green", "subsampled grid")]
+            if args.model_type != "none":
+                curves.append((history_df.iloc[-1]["params"], "red", "fantasized dense grid"))
+            for params, color, label in curves:
+                L_hat = form.to_L_vs_C(C_grid, np.asarray(params))
+                ax.plot(C_grid[seen], L_hat[seen], color=color, ls="-", label=label)
+                ax.plot(C_grid[~seen], L_hat[~seen], color=color, ls="--")
+            L_global_hat = form.to_L_vs_C(C_grid, np.asarray(global_best_params))
+            ax.plot(C_grid[seen], L_global_hat[seen], color="tab:purple", ls="-.", label="all data fit")
+            ax.plot(C_grid[~seen], L_global_hat[~seen], color="tab:purple", ls="--")
+            ax.set_yscale("log")
+            ax.set_xscale("log")
+            ax.set_xlabel("FLOPs")
+            ax.set_ylabel("loss")
+            ax.legend(fontsize=10, ncol=1)
+            ax.grid(which="both", ls="--", lw=1, alpha=0.5)
+            title = "fit (dashed = beyond seen C)" if args.model_type == "none" else \
+                    "real vs fantasized fit (dashed = beyond seen C)"
+            ax.set_title(title)
+        else:
+            ax.axis("off")  # width_depth: no compute axis to plot against
 
     _common.save_panels(fig, flat_axes, panel_idx, output_dir / "figure.png")
