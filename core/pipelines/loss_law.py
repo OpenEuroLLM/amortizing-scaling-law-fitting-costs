@@ -135,11 +135,11 @@ def add_args(parser):
         "fraction by this axis is the held-out (extrapolation) region. Default 'C'."
     )
     parser.add_argument(
-        '--held_out_frac', type=float, default=0.5,
+        '--held_out_frac', type=float, default=0.1,
         help="How much of --split_axis's range (from its max down toward 0) counts as the "
         "held-out extrapolation region -- larger values hold out more. Everything below the "
         "resulting threshold is the acquire-able pool, on which the in-region (interpolation) "
-        "recovery is scored. Default 0.5."
+        "recovery is scored. Default 0.1."
     )
 
 
