@@ -273,7 +273,9 @@ def _plot_ND_fit_panels(ax_D, ax_C, args, form, train_df, acquired_idx, held_out
 
     Points are the optimal (min-loss) row per (N, D) in the fantasized pool (observed where
     acquired, surrogate-predicted elsewhere -- circles) plus the held-out region (stars), colored by
-    N. Three fits are overlaid as same-color, different-linestyle lines evaluated directly at those
+    N. All acquired points (including ones that lost out to another acquisition at the same (N, D))
+    are also drawn, small and greyed.
+    Three fits are overlaid as same-color, different-linestyle lines evaluated directly at those
     (N, D) points: the fit on the acquired points only ("obs only"), the fit on the
     surrogate-fantasized dense pool ("obs + fant", skipped for model-free selection), and the
     "ground truth" fit on the whole acquirable pool.
@@ -299,6 +301,10 @@ def _plot_ND_fit_panels(ax_D, ax_C, args, form, train_df, acquired_idx, held_out
         ("C", ax_C, "FLOPs", None, "Loss vs C"),
     ]
     for x_col, ax, xlabel, label_fn, title in panels:
+        ax.scatter(
+            obs_df[x_col], obs_df["loss"], marker="o", color="black", s=15, alpha=0.3, zorder=2,
+            label="observed all points"
+        )
         sns.scatterplot(
             data=df_fit[~is_held_out], x=x_col, y="loss", hue="N", palette=N_color_map,
             linewidth=0, edgecolor=None, s=40, ax=ax,
@@ -338,6 +344,8 @@ def _plot_ND_fit_panels(ax_D, ax_C, args, form, train_df, acquired_idx, held_out
             Line2D([], [], marker="o", color="black", linestyle="None", markersize=6, label="Train set"),
             Line2D([], [], marker="*", color="black", markeredgecolor="black", linestyle="None",
                    markersize=10, label="Test set"),
+            Line2D([], [], marker="o", color="black", alpha=0.3, linestyle="None", markersize=4,
+                   label="observed all points"),
         ]
         ax.legend(handles=style_handles + marker_handles, loc="upper right", fontsize=7)
 
