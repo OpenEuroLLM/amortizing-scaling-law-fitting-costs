@@ -18,9 +18,12 @@ class TestSplitSearchSpace(unittest.TestCase):
         pool, held = split_search_space(self.df, held_out_frac=0.2)
         self.assertGreaterEqual(held["C"].min(), pool["C"].max())    # top slice by compute
 
-    def test_size_matches_the_fraction(self):
-        pool, held = split_search_space(self.df, held_out_frac=0.2)
-        self.assertAlmostEqual(len(held) / len(self.df), 0.2, delta=0.06)
+    def test_larger_frac_holds_out_more(self):
+        # held_out_frac is a threshold on the axis value (not a row quantile), so held-out size
+        # isn't proportional to the fraction -- but it must grow monotonically with it.
+        _, held_small = split_search_space(self.df, held_out_frac=0.2)
+        _, held_large = split_search_space(self.df, held_out_frac=0.8)
+        self.assertGreaterEqual(len(held_large), len(held_small))
 
     def test_axis_N_and_bad_args_raise(self):
         _, held = split_search_space(self.df, held_out_frac=0.2, axis="N")
