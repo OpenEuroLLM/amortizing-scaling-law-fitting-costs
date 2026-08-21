@@ -272,9 +272,9 @@ def _plot_ND_fit_panels(ax_D, ax_C, args, form, train_df, acquired_idx, held_out
     """Loss-vs-D and loss-vs-FLOPs panels for N,D-input forms (chinchilla3/chinchilla_interaction).
 
     Points are the optimal (min-loss) row per (N, D) in the fantasized pool (observed where
-    acquired, surrogate-predicted elsewhere -- circles) plus the held-out region (stars), colored by
-    N. All acquired points (including ones that lost out to another acquisition at the same (N, D))
-    are also drawn, small and greyed.
+    acquired, surrogate-predicted elsewhere -- circles, colored by N) plus the held-out region
+    (blue X markers). All acquired points (including ones that lost out to another acquisition
+    at the same (N, D)) are also drawn, small and greyed.
     Three fits are overlaid as same-color, different-linestyle lines evaluated directly at those
     (N, D) points: the fit on the acquired points only ("obs only"), the fit on the
     surrogate-fantasized dense pool ("obs + fant", skipped for model-free selection), and the
@@ -309,9 +309,9 @@ def _plot_ND_fit_panels(ax_D, ax_C, args, form, train_df, acquired_idx, held_out
             data=df_fit[~is_held_out], x=x_col, y="loss", hue="N", palette=N_color_map,
             linewidth=0, edgecolor=None, s=40, ax=ax,
         )
-        sns.scatterplot(
-            data=df_fit[is_held_out], x=x_col, y="loss", hue="N", palette=N_color_map,
-            marker="*", s=160, linewidth=0.6, edgecolor="black", ax=ax, legend=False,
+        ax.scatter(
+            df_fit[is_held_out][x_col], df_fit[is_held_out]["loss"], marker="X", color="#265ddc",
+            s=75, zorder=5, edgecolor="white", linewidth=0.6,
         )
         for params, ls, _ in fits:
             df_fit["loss_fit"] = form.func(X, params, return_log_loss=False)
@@ -325,25 +325,20 @@ def _plot_ND_fit_panels(ax_D, ax_C, args, form, train_df, acquired_idx, held_out
         tidy_log_axis(ax, "x", label_fn=label_fn)
 
         # Built directly from N_color_map (not the scatter's auto-legend) so every N value gets an
-        # entry -- including one that's entirely held out and so has no "obs + fant" (circle) points
-        # to draw a legend swatch from.
-        held_out_Ns = set(df_fit.loc[is_held_out, "N"])
+        # entry, including one that's entirely held out -- its color still identifies it via the fit
+        # lines (plotted for every N in df_fit), even though its points are the uniform blue
+        # "held-out eval" marker rather than an N-colored circle.
         n_handles = [
-            Line2D(
-                [], [], marker="*" if n in held_out_Ns else "o", color=color, linestyle="None",
-                markersize=10 if n in held_out_Ns else 6,
-                markeredgecolor="black" if n in held_out_Ns else color,
-                label=FORMAT_N(n),
-            )
+            Line2D([], [], marker="o", color=color, linestyle="None", markersize=6, label=FORMAT_N(n))
             for n, color in N_color_map.items()
         ]
-        n_legend = ax.legend(handles=n_handles, title=r"$N$ (obs + fant)", loc="lower left", fontsize=8)
+        n_legend = ax.legend(handles=n_handles, title=r"$N$", loc="lower left", fontsize=8)
         ax.add_artist(n_legend)
         style_handles = [Line2D([], [], color="black", ls=ls, lw=2, label=lbl) for _, ls, lbl in fits]
         marker_handles = [
             Line2D([], [], marker="o", color="black", linestyle="None", markersize=6, label="Train set"),
-            Line2D([], [], marker="*", color="black", markeredgecolor="black", linestyle="None",
-                   markersize=10, label="Test set"),
+            Line2D([], [], marker="X", color="#265ddc", markeredgecolor="white", linestyle="None",
+                   markersize=10, label="held-out eval"),
             Line2D([], [], marker="o", color="black", alpha=0.3, linestyle="None", markersize=4,
                    label="observed all points"),
         ]
