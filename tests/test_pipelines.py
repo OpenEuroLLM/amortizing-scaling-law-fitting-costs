@@ -41,6 +41,8 @@ class TestPipelinesSmoke(unittest.TestCase):
             args_path = run_dir / "args.json"
             self.assertTrue(hist_path.exists(), f"{task} wrote no history parquet")
             self.assertTrue(args_path.exists(), f"{task} wrote no args.json")
+            ref_path = run_dir / "ref_fits.json"
+            self.assertTrue(ref_path.exists(), f"{task} wrote no ref_fits.json")
             hist = pd.read_parquet(hist_path)
             self.assertGreater(len(hist), 0)
             # every acquisition row carries the two-region eval scores + the fitted params
@@ -52,11 +54,13 @@ class TestPipelinesSmoke(unittest.TestCase):
 
     def test_loss_law_l0(self):
         hist = self._run("loss_law", "L0")
-        self.assertIn("regret_alpha", hist.columns)  # L0's headline coefficient
+        self.assertIn("regret_alpha", hist.columns)  # L0's headline coefficient (global)
+        self.assertIn("regret_val_alpha", hist.columns)
 
     def test_hp_law_steplaw_lr(self):
         hist = self._run("hp_law", "steplaw_lr")
-        self.assertIn("regret_coef", hist.columns)  # step-law coefficient
+        self.assertIn("regret_coef", hist.columns)  # step-law coefficient (global)
+        self.assertIn("regret_val_coef", hist.columns)
 
 
 if __name__ == "__main__":
