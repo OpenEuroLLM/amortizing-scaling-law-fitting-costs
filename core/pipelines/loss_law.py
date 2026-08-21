@@ -287,9 +287,10 @@ def _plot_ND_fit_panels(ax_D, ax_C, args, form, train_df, acquired_idx, held_out
     N_color_map = build_N_color_map(df_fit["N"])
 
     real_params, _ = build_fit(obs_df, form_name=args.form, fit_quality=args.fit_quality)
-    fits = [(real_params, "--", "obs only")]
+    fits = []
     if args.model_type != "none":
         fits.append((np.asarray(history_df.iloc[-1]["params"]), "-", "obs + fant"))
+    fits.append((real_params, "--", "obs only"))
     fits.append((np.asarray(ground_truth_params), ":", "ground truth"))
 
     X = df_fit[form.input_cols].to_numpy()
@@ -317,18 +318,28 @@ def _plot_ND_fit_panels(ax_D, ax_C, args, form, train_df, acquired_idx, held_out
         ax.set_title(title)
         tidy_log_axis(ax, "x", label_fn=label_fn)
 
-        h, l = ax.get_legend_handles_labels()
-        held_out_handle = Line2D(
-            [], [], marker="*", color="black", markeredgecolor="black", linestyle="None",
-            markersize=10, label="held out"
-        )
-        n_legend = ax.legend(
-            h + [held_out_handle], [FORMAT_N(float(x)) for x in l] + ["held out"],
-            title=r"$N$ (obs + fant)", loc="lower left", fontsize=8,
-        )
+        # Built directly from N_color_map (not the scatter's auto-legend) so every N value gets an
+        # entry -- including one that's entirely held out and so has no "obs + fant" (circle) points
+        # to draw a legend swatch from.
+        held_out_Ns = set(df_fit.loc[is_held_out, "N"])
+        n_handles = [
+            Line2D(
+                [], [], marker="*" if n in held_out_Ns else "o", color=color, linestyle="None",
+                markersize=10 if n in held_out_Ns else 6,
+                markeredgecolor="black" if n in held_out_Ns else color,
+                label=FORMAT_N(n),
+            )
+            for n, color in N_color_map.items()
+        ]
+        n_legend = ax.legend(handles=n_handles, title=r"$N$ (obs + fant)", loc="lower left", fontsize=8)
         ax.add_artist(n_legend)
         style_handles = [Line2D([], [], color="black", ls=ls, lw=2, label=lbl) for _, ls, lbl in fits]
-        ax.legend(handles=style_handles, loc="upper right", fontsize=7)
+        marker_handles = [
+            Line2D([], [], marker="o", color="black", linestyle="None", markersize=6, label="Train set"),
+            Line2D([], [], marker="*", color="black", markeredgecolor="black", linestyle="None",
+                   markersize=10, label="Test set"),
+        ]
+        ax.legend(handles=style_handles + marker_handles, loc="upper right", fontsize=7)
 
 
 def _plot(args, form, supports_C, history_df, interp_names, train_df, acquired_idx,
@@ -339,13 +350,23 @@ def _plot(args, form, supports_C, history_df, interp_names, train_df, acquired_i
     # L(N,D) surface isn't naturally indexed by C alone. Laid out dynamically.
     set_pub_style()
     is_ND_form = form.input_cols == ["N", "D"]
-    n_extra_panels = 2 + (2 if is_ND_form else 1)  # two-set MSE, compute/iter, fit-comparison panel(s)
-    total_panels = len(interp_names) + n_extra_panels
     ncols = 3
-    nrows = int(np.ceil(total_panels / ncols))
+    # "regular" panels: per-param regret + two-set MSE + compute/iter, laid out on a 3-col grid. ND
+    # forms get their two fit-comparison panels on a dedicated full-width row below instead of sharing
+    # this grid (each spans half the row -- wider than the regular panels, and non-square).
+    n_regular_panels = len(interp_names) + 2 + (0 if is_ND_form else 1)
+    n_reg_rows = int(np.ceil(n_regular_panels / ncols))
 
-    fig, axes = plt.subplots(nrows, ncols, figsize=(16, 4.5 * nrows))
-    flat_axes = np.atleast_2d(axes).flatten()
+    if is_ND_form:
+        fig = plt.figure(figsize=(16, 4.5 * n_reg_rows + 6))
+        gs = fig.add_gridspec(n_reg_rows + 1, 2 * ncols, height_ratios=[1] * n_reg_rows + [6 / 4.5])
+        flat_axes = np.array([
+            fig.add_subplot(gs[i // ncols, (i % ncols) * 2:(i % ncols) * 2 + 2])
+            for i in range(n_reg_rows * ncols)
+        ])
+    else:
+        fig, axes = plt.subplots(n_reg_rows, ncols, figsize=(16, 4.5 * n_reg_rows))
+        flat_axes = np.atleast_2d(axes).flatten()
 
     # per-param regret panels, then the two-set recovery panel + compute/iter
     panel_idx = _common.plot_regret_panels(flat_axes, 0, history_df, form, interp_names)
@@ -366,8 +387,8 @@ def _plot(args, form, supports_C, history_df, interp_names, train_df, acquired_i
 
     # fit-comparison panel(s): real vs fantasized (vs ground-truth, for N,D forms) parametric fits
     if is_ND_form:
-        ax_D, ax_C = flat_axes[panel_idx], flat_axes[panel_idx + 1]
-        panel_idx += 2
+        ax_D = fig.add_subplot(gs[n_reg_rows, 0:ncols])
+        ax_C = fig.add_subplot(gs[n_reg_rows, ncols:2 * ncols])
         _plot_ND_fit_panels(ax_D, ax_C, args, form, train_df, acquired_idx, held_out_df, history_df,
                             df_pred, ground_truth_params)
     else:
