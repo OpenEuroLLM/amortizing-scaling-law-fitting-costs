@@ -228,7 +228,7 @@ def run(args):
 
     # --- acquisition loop ---
     history, incumbents, interp_names, df_pred, acquired_idx, surrogate_pred_rows = _common.run_acquisition(
-        args, form, gp_features, train_df, global_best_params, fit_grid, heldout_metric
+        args, form, gp_features, train_df, train_best_params, fit_grid, heldout_metric
     )
 
     pareto_diag = None
@@ -264,18 +264,19 @@ def run(args):
 
     if args.plot_figure:
         _plot(args, form, supports_C, history_df, interp_names, train_df, acquired_idx,
-              held_out_df, C_known, L_known, C_unknown, df_pred, global_best_params, output_dir)
+              held_out_df, C_known, L_known, C_unknown, df_pred, train_best_params, output_dir)
 
 
 def _plot_ND_fit_panels(ax_D, ax_C, args, form, train_df, acquired_idx, held_out_df, history_df,
-                        df_pred, global_best_params):
+                        df_pred, ground_truth_params):
     """Loss-vs-D and loss-vs-FLOPs panels for N,D-input forms (chinchilla3/chinchilla_interaction).
 
     Points are the optimal (min-loss) row per (N, D) in the fantasized pool (observed where
     acquired, surrogate-predicted elsewhere -- circles) plus the held-out region (stars), colored by
     N. Three fits are overlaid as same-color, different-linestyle lines evaluated directly at those
-    (N, D) points: the fit on the acquired points, the fit on the surrogate-fantasized dense grid
-    (skipped for model-free selection), and the full-grid ground truth.
+    (N, D) points: the fit on the acquired points only ("obs only"), the fit on the
+    surrogate-fantasized dense pool ("obs + fant", skipped for model-free selection), and the
+    "ground truth" fit on the whole acquirable pool.
     """
     obs_df = train_df.loc[acquired_idx]
     pool_points = df_pred if df_pred is not None else obs_df  # fantasized dense grid, or obs-only fallback
@@ -286,13 +287,17 @@ def _plot_ND_fit_panels(ax_D, ax_C, args, form, train_df, acquired_idx, held_out
     N_color_map = build_N_color_map(df_fit["N"])
 
     real_params, _ = build_fit(obs_df, form_name=args.form, fit_quality=args.fit_quality)
-    fits = [(real_params, "--", "acquired points")]
+    fits = [(real_params, "--", "obs only")]
     if args.model_type != "none":
-        fits.append((np.asarray(history_df.iloc[-1]["params"]), "-", "fantasized dense grid"))
-    fits.append((np.asarray(global_best_params), ":", "ground truth (all data)"))
+        fits.append((np.asarray(history_df.iloc[-1]["params"]), "-", "obs + fant"))
+    fits.append((np.asarray(ground_truth_params), ":", "ground truth"))
 
     X = df_fit[form.input_cols].to_numpy()
-    for x_col, ax, xlabel, label_fn in [("D", ax_D, r"$D$", FORMAT_BILLIONS), ("C", ax_C, "FLOPs", None)]:
+    panels = [
+        ("D", ax_D, r"$D$", FORMAT_BILLIONS, "Loss vs D"),
+        ("C", ax_C, "FLOPs", None, "Loss vs C"),
+    ]
+    for x_col, ax, xlabel, label_fn, title in panels:
         sns.scatterplot(
             data=df_fit[~is_held_out], x=x_col, y="loss", hue="N", palette=N_color_map,
             linewidth=0, edgecolor=None, s=40, ax=ax,
@@ -309,18 +314,25 @@ def _plot_ND_fit_panels(ax_D, ax_C, args, form, train_df, acquired_idx, held_out
             )
         ax.set_xscale("log"); ax.set_yscale("log")
         ax.set_xlabel(xlabel); ax.set_ylabel(r"$\mathcal{L}_{\mathrm{valid}}$")
-        ax.set_title("Fit")
+        ax.set_title(title)
         tidy_log_axis(ax, "x", label_fn=label_fn)
 
         h, l = ax.get_legend_handles_labels()
-        n_legend = ax.legend(h, [FORMAT_N(float(x)) for x in l], title=r"$N$", loc="lower left", fontsize=8)
+        held_out_handle = Line2D(
+            [], [], marker="*", color="black", markeredgecolor="black", linestyle="None",
+            markersize=10, label="held out"
+        )
+        n_legend = ax.legend(
+            h + [held_out_handle], [FORMAT_N(float(x)) for x in l] + ["held out"],
+            title=r"$N$ (obs + fant)", loc="lower left", fontsize=8,
+        )
         ax.add_artist(n_legend)
         style_handles = [Line2D([], [], color="black", ls=ls, lw=2, label=lbl) for _, ls, lbl in fits]
         ax.legend(handles=style_handles, loc="upper right", fontsize=7)
 
 
 def _plot(args, form, supports_C, history_df, interp_names, train_df, acquired_idx,
-          held_out_df, C_known, L_known, C_unknown, df_pred, global_best_params, output_dir):
+          held_out_df, C_known, L_known, C_unknown, df_pred, ground_truth_params, output_dir):
     # panels: one regret plot per interpretable param, plus the two-set recovery curve, compute/iter,
     # and the fit-comparison plot(s) -- one loss-vs-C panel for L-vs-C forms, or two panels
     # (loss-vs-D, loss-vs-FLOPs) for N,D-input forms (chinchilla3/chinchilla_interaction), since their
@@ -357,7 +369,7 @@ def _plot(args, form, supports_C, history_df, interp_names, train_df, acquired_i
         ax_D, ax_C = flat_axes[panel_idx], flat_axes[panel_idx + 1]
         panel_idx += 2
         _plot_ND_fit_panels(ax_D, ax_C, args, form, train_df, acquired_idx, held_out_df, history_df,
-                            df_pred, global_best_params)
+                            df_pred, ground_truth_params)
     else:
         ax = flat_axes[panel_idx]
         panel_idx += 1
@@ -393,7 +405,7 @@ def _plot(args, form, supports_C, history_df, interp_names, train_df, acquired_i
                 L_hat = form.to_L_vs_C(C_grid, np.asarray(params))
                 ax.plot(C_grid[seen], L_hat[seen], color=color, ls="-", label=label)
                 ax.plot(C_grid[~seen], L_hat[~seen], color=color, ls="--")
-            L_global_hat = form.to_L_vs_C(C_grid, np.asarray(global_best_params))
+            L_global_hat = form.to_L_vs_C(C_grid, np.asarray(ground_truth_params))
             ax.plot(C_grid[seen], L_global_hat[seen], color="tab:purple", ls="-.", label="all data fit")
             ax.plot(C_grid[~seen], L_global_hat[~seen], color="tab:purple", ls="--")
             ax.set_yscale("log")
