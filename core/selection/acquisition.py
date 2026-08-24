@@ -26,6 +26,43 @@ class ExpectedImprovement:
         return improvement * norm.cdf(z) + sigma * norm.pdf(z)
 
 
+class LowerConfidenceBound:
+    """LCB for minimization: LCB(x) = mu(x) - kappa * sigma(x).
+
+    The true LCB is *minimized*, but the driver maximizes acquisition scores, so
+    ``score`` returns the negated LCB (kappa*sigma - mu); its argmax is the LCB argmin.
+    kappa >= 0 trades off exploitation (low mu) against exploration (high sigma);
+    kappa ~ 1-3 is typical, 2 the common default.
+    """
+
+    def __init__(self, kappa: float = 2.0):
+        self.kappa = kappa
+
+    def score(self, mu: np.ndarray, sigma: np.ndarray) -> np.ndarray:
+        mu = np.asarray(mu, dtype=float).ravel()
+        sigma = np.asarray(sigma, dtype=float).ravel()
+        sigma = np.clip(sigma, 1e-12, None)
+        return self.kappa * sigma - mu               # = -(mu - kappa*sigma); argmax = LCB argmin
+
+
+class ProbabilityOfImprovement:
+    """PI for minimization: P(f(x) < incumbent - xi) = Phi(z) under f(x) ~ N(mu, sigma).
+
+    incumbent = best (lowest) observed loss so far. Asks only *whether* a point improves,
+    not by how much -- greedier and less exploratory than EI.
+    """
+
+    def __init__(self, xi: float = 0.0):
+        self.xi = xi  # exploration margin; larger => demand bigger improvement
+
+    def score(self, mu: np.ndarray, sigma: np.ndarray, incumbent: float) -> np.ndarray:
+        mu = np.asarray(mu, dtype=float).ravel()
+        sigma = np.asarray(sigma, dtype=float).ravel()
+        sigma = np.clip(sigma, 1e-12, None)
+        z = (incumbent - mu - self.xi) / sigma
+        return norm.cdf(z)
+
+
 class ExpectedImprovementPerCost(ExpectedImprovement):
     """EI per unit cost: EI(x) / log(cost(x)), with cost = 6*N*D (FLOPs)."""
 

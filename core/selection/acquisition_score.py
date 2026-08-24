@@ -49,6 +49,46 @@ class EISelection(DataSelection):
         return int(candidate_set[int(np.argmax(scores))])
 
 
+class PISelection(EISelection):
+    """Acquire the pool point with the highest Probability of Improvement."""
+
+    def __init__(self, seed: int):
+        super().__init__(seed)
+        from .acquisition import ProbabilityOfImprovement
+        self.acq = ProbabilityOfImprovement()
+
+
+class LCBSelection(EISelection):
+    """Acquire the pool point with the lowest LCB (mu - kappa*sigma).
+
+    First acquisition with its own hyperparameter: ``kappa`` (exploration weight).
+    LCB needs no incumbent, so next_point is overridden.
+    """
+
+    def __init__(self, seed: int, kappa: float = 2.0):
+        super().__init__(seed)
+        from .acquisition import LowerConfidenceBound
+        self.acq = LowerConfidenceBound(kappa=kappa)
+
+    def next_point(
+        self,
+        df: pd.DataFrame,
+        candidate_set: pd.Index | None = None,
+        acquired_idx: pd.Index | None = None,
+        surrogate=None,
+        **kwargs
+    ) -> int:
+        if candidate_set is None:
+            candidate_set = df.index
+        candidate_set = pd.Index(candidate_set)
+        if surrogate is None:
+            return int(self.rng.choice(candidate_set))     # bootstrap
+        X = np.log(df.loc[candidate_set, FEATURES].to_numpy(float))
+        mu, sigma = surrogate.predict(X, return_std=True)
+        scores = self.acq.score(mu, sigma)
+        return int(candidate_set[int(np.argmax(scores))])
+
+
 class EIPerCostSelection(EISelection):
     """Acquire the pool point with the highest EI per unit cost, cost = 6*N*D."""
 

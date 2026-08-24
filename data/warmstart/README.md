@@ -22,20 +22,19 @@ warmup-stable-decay LR schedule with a 1%-of-training linear warmup and a
 LR, effective batch size) are tuned at each of 3 base scales and transferred
 to target scales via &mu;P (Appendix D.3, Table 6).
 
-The raw file's `method` column bundles the 3 initialization techniques being
+~~The raw file's `method` column bundles the 3 initialization techniques being
 compared against the same (N, D) grid, each with its own loss(N, D) surface
-by design; `preprocess.py` adapts them into one output dataset per method.
+by design; `preprocess.py` adapts them into one output dataset per method.~~
 
-Not hosted in the paper's own repository (linked above); the raw file is
-fetched from a Google Drive link the authors share in a sibling project's
-README (`EffingScaling/README.md`, "Warmstarting Data").
+Not hosted in the paper's own repository (linked above); the csv file is
+fetched from a Google Drive link the authors share ~~in a sibling project's
+README (`EffingScaling/README.md`, "Warmstarting Data").~~ privately.
 
 ## The data
 
 | our dataset name | n_points | model size range (n sizes) | token budget range (n budgets) | what differentiates it |
 |---|---|---|---|---|
 | `warmstart_scratch` | 33 | 32.3M-1.22B (6 sizes) | 323M-18.3B (16 budgets) | Training the target model from a random initialization, with &mu;P-transferred hyperparameters (raw `method="mup"`) -- the paper's `Scratch` baseline. |
-| `warmstart_net2net` | 27 | 32.3M-287M (4 sizes) | 323M-8.61B (12 budgets) | Growing the target model from the base checkpoint via Net2Net (Chen et al., 2016; Appendix G) -- a function-preserving width-expansion baseline. |
 | `warmstart_szp` | 110 | 32.3M-1.22B (6 sizes) | 323M-18.3B (20 budgets) | Growing the target model from the base checkpoint via Shrink-Zeros-Perturb (SZP, Sec. 3.2, Eq. 2) -- the paper's own architecture-agnostic warmstarting method, and its main object of study. Raw `warmstart_type="snp_zeros_with_mup"`. |
 
 ### Naming convention

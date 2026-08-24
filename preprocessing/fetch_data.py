@@ -47,10 +47,14 @@ URL_SOURCES = {
     # Mallik et al., "When is Warmstarting Effective for Scaling Language
     # Models?", arXiv:2605.13405. Drive link the authors share for the raw
     # data in a sibling project's: EffingScaling/README.md; "Warmstarting Data".
-    "warmstart": {
+    "warmstart_raw": {
         "url": "https://drive.google.com/uc?export=download&id=1vr5Jq1TpTpnkb5CX5mcu2wWQQzbf-bmd",
         "filename": "warmstart_runs_flattened.parquet",
     },
+    "warmstart": {
+        "url": "https://drive.google.com/uc?export=download&id=1Hc-Sdcc0cw-neFUpLZ6YX1CgU2xxH_Ah",
+        "filename": "warmstart_final.csv",
+    }
 }
 
 SPLIT_URL_SOURCES = {
@@ -116,7 +120,11 @@ def fetch_git(name: str, repo: str, paths: list) -> Path:
 def fetch_url(name: str, url: str, filename: str) -> Path:
     dest = DATA_DIR / name / "raw" / filename
     dest.parent.mkdir(parents=True, exist_ok=True)
-    urllib.request.urlretrieve(url, dest)
+    if "drive.google.com" in url:
+        import gdown
+        gdown.download(url, str(dest), quiet=False)
+    else:
+        urllib.request.urlretrieve(url, dest)
     return dest
 
 

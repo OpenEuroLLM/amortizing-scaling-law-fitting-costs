@@ -2,7 +2,7 @@ import numpy as np
 import pandas as pd
 
 from .base import DataSelection
-from .ei import FEATURES, TARGET
+from .acquisition_score import FEATURES, TARGET
 from .acquisition import ExpectedImprovement
 
 
