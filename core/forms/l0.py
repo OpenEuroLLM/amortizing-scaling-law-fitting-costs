@@ -53,7 +53,7 @@ L0_FORM = ParametricForm(
     use_pareto=True,
     initial_grid=_l0_initial_grid,
     bounds=[
-        (1e-3, 4.0),  # L0 bounds
+        (np.log(1e-3), np.log(4.0)),  # L0 bounds
         (None, None),                 # A bounds
         (-1.0, 0.0),                  # alpha bounds
     ],
