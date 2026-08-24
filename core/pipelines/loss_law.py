@@ -23,6 +23,7 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+import seaborn as sns
 from matplotlib.lines import Line2D
 from matplotlib.patches import Patch
 
@@ -33,7 +34,7 @@ from core.surrogates import build_surrogate
 from core.forms import PARAMETRIC_FORMS
 from core.fitting import build_fit, print_fit_results
 from core.utils.data import split_search_space
-from core.utils.plotting import set_pub_style, tidy_log_axis, FORMAT_N, FORMAT_BILLIONS
+from core.utils.plotting import set_pub_style, tidy_log_axis, build_N_color_map, FORMAT_N, FORMAT_BILLIONS
 from core.pipelines import _common
 
 # forms this task handles: those that fit `loss` (steplaw_lr/bsz fit an HP -> hp_law task)
@@ -142,6 +143,12 @@ def add_args(parser):
         "held-out extrapolation region -- larger values hold out more. Everything below the "
         "resulting threshold is the acquire-able pool, on which the in-region (interpolation) "
         "recovery is scored. Default 0.1."
+    )
+    parser.add_argument(
+        '--color_fits_by_N', action='store_true',
+        help="Chinchilla (N,D)-form fit panels only (--form chinchilla3/chinchilla_interaction "
+        "with --plot_figure): color each N's fit curves and optimal points by model size instead "
+        "of by fit type, with an N color legend instead of the per-curve size label."
     )
 
 
@@ -275,18 +282,22 @@ def _plot_ND_fit_panels(ax_D, ax_C, args, form, train_df, acquired_idx, held_out
     acquired, surrogate-predicted elsewhere -- plain grey circles) plus the held-out region
     (blue X markers). All acquired points (including ones that lost out to another acquisition
     at the same (N, D)) are also drawn, small and greyed.
-    Three fits are overlaid per N, colored the same way as the loss-vs-C panel's fits (green =
-    obs only, red = obs + fant, purple = ground truth) and evaluated on a per-N grid that runs
-    from that N's smallest observed x-value out to 2 orders of magnitude beyond the last plotted
-    point on that axis -- the same extrapolation depth as the L-vs-C panel's beyond-the-grid extension
+    Three fits are overlaid per N, evaluated on a per-N grid that runs from that N's smallest
+    observed x-value out to 2 orders of magnitude beyond the last plotted point on that axis --
+    the same extrapolation depth as the L-vs-C panel's beyond-the-grid extension
     (``C_unknown = C_known.max() * 10**[1, 2]``): the fit on the acquired points only ("obs only"),
     the fit on the surrogate-fantasized dense pool ("obs + fant", skipped for model-free selection),
-    and the "ground truth" fit on the whole acquirable pool. Since color no longer distinguishes N,
-    each N's model size is written above the left end of its own fit-curve bundle. The held-out
-    region -- from the last plotted point on that axis (pool or held-out, whichever is larger -- the
-    two interleave along D/C when ``--split_axis N`` is used) out to that same extrapolation limit --
-    is shaded with the loss-vs-C panel's "held-out region" style (``#008969`` at alpha 0.25).
+    and the "ground truth" fit on the whole acquirable pool. By default (``--color_fits_by_N``
+    unset) fits are colored the same way as the loss-vs-C panel's fits (green = obs only, red =
+    obs + fant, purple = ground truth), points are plain grey/blue, and each N's model size is
+    written above the left end of its own fit-curve bundle since color doesn't distinguish N. With
+    ``--color_fits_by_N``, fits and optimal points are colored per N instead (an N color legend
+    replaces the size labels), matching the fit type only by linestyle. The held-out region -- from
+    the last plotted point on that axis (pool or held-out, whichever is larger -- the two interleave
+    along D/C when ``--split_axis N`` is used) out to that same extrapolation limit -- is shaded
+    with the loss-vs-C panel's "held-out region" style (``#008969`` at alpha 0.25).
     """
+    color_by_N = args.color_fits_by_N
     obs_df = train_df.loc[acquired_idx]
     pool_points = df_pred if df_pred is not None else obs_df  # fantasized dense grid, or obs-only fallback
     combined = pd.concat([pool_points, held_out_df])
@@ -304,13 +315,22 @@ def _plot_ND_fit_panels(ax_D, ax_C, args, form, train_df, acquired_idx, held_out
         n_labels = {}
 
     real_params, _ = build_fit(obs_df, form_name=args.form, fit_quality=args.fit_quality)
-    # same colors + base linestyles as the loss-vs-C panel's curves (subsampled grid = solid green,
-    # fantasized dense grid = solid red, all data fit = dash-dot purple); each becomes dashed beyond
-    # the observed x range, same as the loss-vs-C panel's "dashed = beyond seen C".
-    fits = [(real_params, "tab:green", "-", "subsampled grid")]
-    if args.model_type != "none":
-        fits.append((np.asarray(history_df.iloc[-1]["params"]), "red", "-", "fantasized dense grid"))
-    fits.append((np.asarray(ground_truth_params), "tab:purple", "-.", "ground truth"))
+    if color_by_N:
+        # color distinguishes N instead of fit type -- fit type is carried by linestyle alone, and
+        # the per-N color is resolved from N_color_map when each curve is actually drawn below.
+        N_color_map = build_N_color_map(df_fit["N"])
+        fits = [(real_params, None, "--", "obs only")]
+        if args.model_type != "none":
+            fits.append((np.asarray(history_df.iloc[-1]["params"]), None, "-", "obs + fant"))
+        fits.append((np.asarray(ground_truth_params), None, ":", "ground truth"))
+    else:
+        # same colors + base linestyles as the loss-vs-C panel's curves (subsampled grid = solid
+        # green, fantasized dense grid = solid red, all data fit = dash-dot purple); each becomes
+        # dashed beyond the observed x range, same as the loss-vs-C panel's "dashed = beyond seen C".
+        fits = [(real_params, "tab:green", "-", "subsampled grid")]
+        if args.model_type != "none":
+            fits.append((np.asarray(history_df.iloc[-1]["params"]), "red", "-", "fantasized dense grid"))
+        fits.append((np.asarray(ground_truth_params), "tab:purple", "-.", "ground truth"))
 
     # extend each N-curve's fit 2 orders of magnitude beyond the last plotted point on that axis,
     # matching the loss-vs-C panel's C_unknown extrapolation (10^1..10^2 beyond the held-out max C).
@@ -333,15 +353,21 @@ def _plot_ND_fit_panels(ax_D, ax_C, args, form, train_df, acquired_idx, held_out
             obs_df[x_col], obs_df["loss"], marker="o", color="black", s=8, alpha=0.3, zorder=2,
             label="observed all points"
         )
-        ax.scatter(
-            df_fit[~is_held_out][x_col], df_fit[~is_held_out]["loss"], marker="o", color="0.35",
-            linewidth=0, s=20, zorder=3,
-        )
+        if color_by_N:
+            sns.scatterplot(
+                data=df_fit[~is_held_out], x=x_col, y="loss", hue="N", palette=N_color_map,
+                linewidth=0, edgecolor=None, s=20, ax=ax, legend=False, zorder=3,
+            )
+        else:
+            ax.scatter(
+                df_fit[~is_held_out][x_col], df_fit[~is_held_out]["loss"], marker="o", color="0.35",
+                linewidth=0, s=20, zorder=3,
+            )
         ax.scatter(
             df_fit[is_held_out][x_col], df_fit[is_held_out]["loss"], marker="X", color="#265ddc",
             s=30, zorder=5, edgecolor="white", linewidth=0.6,
         )
-        x_seen_max = obs_df[x_col].max()          
+        x_seen_max = obs_df[x_col].max()
         for n in sorted(df_fit["N"].unique()):
             sub = df_fit[df_fit["N"] == n]
             if sub.empty:
@@ -353,15 +379,17 @@ def _plot_ND_fit_panels(ax_D, ax_C, args, form, train_df, acquired_idx, held_out
             y_left = []
             for params, color, ls, _ in fits:
                 y = form.func(X_grid, params, return_log_loss=False)
-                ax.plot(x_grid[seen], y[seen], color=color, ls=ls, lw=1)
-                ax.plot(x_grid[~seen], y[~seen], color=color, ls="--", lw=1)
+                line_color = N_color_map[n] if color_by_N else color
+                ax.plot(x_grid[seen], y[seen], color=line_color, ls=ls, lw=1)
+                ax.plot(x_grid[~seen], y[~seen], color=line_color, ls="--", lw=1)
                 y_left.append(y[0])
-            # model size labeled above the left (lowest-x) end of this N's fit-curve bundle, since
-            # color no longer distinguishes N
-            ax.annotate(
-                FORMAT_N(n_labels.get(n, n)), (x_grid[0], max(y_left)), xytext=(-25, -10),
-                textcoords="offset points", ha="left", va="bottom", fontsize=7,
-            )
+            if not color_by_N:
+                # model size labeled above the left (lowest-x) end of this N's fit-curve bundle,
+                # since color doesn't distinguish N
+                ax.annotate(
+                    FORMAT_N(n_labels.get(n, n)), (x_grid[0], max(y_left)), xytext=(-25, -10),
+                    textcoords="offset points", ha="left", va="bottom", fontsize=7,
+                )
         ax.set_xscale("log"); ax.set_yscale("log")
         ax.set_xlabel(xlabel); ax.set_ylabel(r"$\mathcal{L}_{\mathrm{valid}}$")
         ax.set_title(title)
@@ -371,16 +399,35 @@ def _plot_ND_fit_panels(ax_D, ax_C, args, form, train_df, acquired_idx, held_out
         ax.set_xlim(x_min, x_ext_max)
         tidy_log_axis(ax, "x", label_fn=label_fn)
 
-        style_handles = [Line2D([], [], color=color, ls=ls, lw=1, label=lbl) for _, color, ls, lbl in fits]
-        marker_handles = [
-            Line2D([], [], marker="o", color="0.35", linestyle="None", markersize=3, label="observed optimal"),
-            Line2D([], [], marker="X", color="#265ddc", markeredgecolor="white", linestyle="None",
-                   markersize=7, label="held-out eval"),
-            Patch(facecolor="#008969", alpha=0.25, label="extrapolation region"),
-            Line2D([], [], marker="o", color="black", alpha=0.3, linestyle="None", markersize=3,
-                   label="observed all points"),
-        ]
-        ax.legend(handles=style_handles + marker_handles, loc="upper right", fontsize=7)
+        if color_by_N:
+            style_handles = [Line2D([], [], color="black", ls=ls, lw=1, label=lbl) for _, _, ls, lbl in fits]
+            marker_handles = [
+                Line2D([], [], marker="o", color="black", alpha=0.3, linestyle="None", markersize=2,
+                       label="observed all points"),
+                Line2D([], [], marker="X", color="#265ddc", markeredgecolor="white", linestyle="None",
+                       markersize=7, label="held-out eval"),
+                Patch(facecolor="#008969", alpha=0.25, label="extrapolation region"),
+            ]
+            # separate legend for the N color map, kept alongside (not replaced by) the style/marker
+            # legend below -- add_artist is needed since a second ax.legend() call would drop the first
+            n_handles = [
+                Line2D([], [], marker="o", color=color, linestyle="None", markersize=3,
+                       label=FORMAT_N(n_labels.get(n, n)))
+                for n, color in N_color_map.items()
+            ]
+            n_legend = ax.legend(handles=n_handles, title=r"$N$", loc="lower left", fontsize=8)
+            ax.add_artist(n_legend)
+        else:
+            style_handles = [Line2D([], [], color=color, ls=ls, lw=1, label=lbl) for _, color, ls, lbl in fits]
+            marker_handles = [
+                Line2D([], [], marker="o", color="black", alpha=0.3, linestyle="None", markersize=2,
+                       label="observed all points"),
+                Line2D([], [], marker="o", color="0.35", linestyle="None", markersize=3, label="observed optimal"),
+                Line2D([], [], marker="X", color="#265ddc", markeredgecolor="white", linestyle="None",
+                       markersize=7, label="held-out eval"),
+                Patch(facecolor="#008969", alpha=0.25, label="extrapolation region"),
+            ]
+        ax.legend(handles=marker_handles + style_handles, loc="upper right", fontsize=7)
 
 
 def _plot(args, form, supports_C, history_df, interp_names, train_df, acquired_idx,
