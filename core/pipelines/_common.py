@@ -85,6 +85,18 @@ def add_acquisition_args(parser):
         help="Factor to multiply the minimum compute cost to set the initial envelope for sampling."
     )
     parser.add_argument(
+        '--init_practice', action='store_true',
+        help="Practice-style init: at the smallest N, form a pool from the full HP grid over the "
+        "k smallest D values (--init_practice_ds), then randomly sample --init_points rows from "
+        "that pool (seed-dependent). Sets C_lim to max C among sampled rows; init compute is the "
+        "sum of C over sampled rows only. Default init samples randomly under the envelope."
+    )
+    parser.add_argument(
+        '--init_practice_ds', type=int, default=4,
+        help="With --init_practice: how many smallest D values at min N define the init pool "
+        "(typical range 1–4). Ignored unless --init_practice is set."
+    )
+    parser.add_argument(
         '--C_window', type=float, nargs=2, default=[1e-3, 1e3], metavar=('LO', 'HI'),
         help="Factors on the max. seen compute to determine permissible range for sampling."
     )
@@ -154,19 +166,81 @@ def prepare_data(args):
     return df, gp_features
 
 
-def run_acquisition(args, form, gp_features, train_df, global_best_params, fit_grid, heldout_metric):
+def _init_acquired_idx_default(train_df, init_points, rng, C_lim, C_window):
+    """Random init: sample ``init_points`` rows from the pool under the compute envelope."""
+    pool = next_batch_compute(train_df, acquired_idx=None, C_max=C_lim, C_window=C_window)
+    if len(pool) < init_points:
+        raise ValueError(
+            f"Init pool has {len(pool)} rows but --init_points={init_points}; "
+            "widen --C_window or lower --init_points."
+        )
+    return pd.Index(rng.choice(pool.index, init_points, replace=False))
+
+
+def _init_acquired_idx_practice(train_df, init_points, init_practice_ds, y_target, rng):
+    """Practice-style init: full HP grid at smallest N for ``init_practice_ds`` smallest Ds.
+
+    Randomly samples ``init_points`` rows from that pool (seed-dependent). Returns
+    ``(acquired_idx, practice_pool_idx)``.
+    """
+    needed = {"N", "D", y_target, "C"}
+    missing = needed - set(train_df.columns)
+    if missing:
+        raise ValueError(f"--init_practice requires columns {sorted(needed)} on the acquire pool; missing {sorted(missing)}.")
+    if init_practice_ds < 1:
+        raise ValueError(f"--init_practice_ds must be >= 1, got {init_practice_ds}.")
+    min_N = train_df["N"].min()
+    candidates = train_df[train_df["N"] == min_N]
+    if candidates.empty:
+        raise ValueError(f"--init_practice: no rows at min N={min_N}.")
+    k = min(init_practice_ds, candidates["D"].nunique())
+    smallest_Ds = np.sort(candidates["D"].unique())[:k]
+    practice_pool = candidates[candidates["D"].isin(smallest_Ds)]
+    if practice_pool.empty:
+        raise ValueError("--init_practice: found no initial pool rows.")
+    if len(practice_pool) < init_points:
+        raise ValueError(
+            f"--init_practice pool has {len(practice_pool)} rows at min N over {k} D value(s) "
+            f"but --init_points={init_points}; increase --init_practice_ds or lower --init_points."
+        )
+    acquired_idx = pd.Index(rng.choice(practice_pool.index, init_points, replace=False))
+    return acquired_idx, practice_pool.index
+
+
+def _param_regrets(interp, ref_interp, form, interp_names) -> dict[str, float]:
+    """Interpretable-parameter regret vs a reference fit (signed for ``form.signed_params``)."""
+    return {
+        name: (interp[name] - ref_interp[name]) if name in form.signed_params
+        else abs(interp[name] - ref_interp[name])
+        for name in interp_names
+    }
+
+
+def _update_incumbents(incumbents, row, form, interp_names, col_prefix: str) -> None:
+    """Track running best regret from one history row (obs+fant columns only)."""
+    for name in interp_names:
+        col = f"{col_prefix}_{name}"
+        if name in form.signed_params:
+            incumbents[name] = min(incumbents[name], row[col], key=abs)
+        else:
+            incumbents[name] = min(incumbents[name], row[col])
+
+
+def run_acquisition(
+    args, form, gp_features, train_df, global_best_params, val_best_params, fit_grid, heldout_metric,
+):
     """The shared acquisition loop.
 
     ``fit_grid(df_pred)`` extracts + fits (task-specific); ``heldout_metric(params)`` returns extra
     per-iteration history fields (task-specific). Returns
-    ``(history, incumbents, interp_names, df_pred, acquired_idx, surrogate_pred_rows)`` -- the
-    last three for the caller's plotting / sidecar saves.
+    ``(history, incumbents, incumbents_val, interp_names, df_pred, acquired_idx, surrogate_pred_rows)``.
+    Regrets are logged w.r.t. both the global reference (all data) and the validation reference
+    (acquire pool only): ``regret_*`` / ``regret_val_*`` (+ obs-only variants).
     """
     if args.niters is None and args.C_budget is None:
         raise ValueError("Either --niters or --C_budget must be specified.")
     if args.niters is not None and args.C_budget is not None:
         raise ValueError("Only one of --niters or --C_budget can be specified.")
-    n_iters = args.init_points + (args.niters or (MAX_ITERS - args.init_points))
 
     seed_everything(args.seed)
     splitter = SELECTION[args.selection](seed=args.seed)
@@ -177,20 +251,46 @@ def run_acquisition(args, form, gp_features, train_df, global_best_params, fit_g
             f"e.g. --selection random."
         )
     rng = np.random.RandomState(args.seed)
-
-    # initialization: seed with the cheapest point, then fill up to init_points under the envelope
-    C_lim = train_df.C.min() * args.init_compute_factor
-    pool = next_batch_compute(train_df, acquired_idx=None, C_max=C_lim, C_window=args.C_window)
-    acquired_idx = pd.Index(rng.choice(pool.index, args.init_points, replace=False))
-    init_points_idx = acquired_idx.copy()
-    total_compute_spent = train_df.loc[acquired_idx, "C"].sum()
     y_target = args.y_target
+
+    init_best_hp_idx = None
+
+    if args.init_practice:
+        acquired_idx, practice_pool_idx = _init_acquired_idx_practice(
+            train_df, args.init_points, args.init_practice_ds, y_target, rng,
+        )
+        C_lim = float(train_df.loc[acquired_idx, "C"].max())
+        init_compute = float(train_df.loc[acquired_idx, "C"].sum())
+        k = min(args.init_practice_ds, train_df.loc[practice_pool_idx, "D"].nunique())
+        print(
+            f"Init (practice): sampled {len(acquired_idx)}/{len(practice_pool_idx)} rows from "
+            f"min N={train_df.loc[practice_pool_idx, 'N'].iloc[0]:.3e}, {k} smallest D(s); "
+            f"init compute={init_compute:.2e}, C_lim={C_lim:.2e}"
+        )
+        init_best_hp_idx = acquired_idx.copy()
+        n_init = len(acquired_idx)
+    else:
+        C_lim = train_df.C.min() * args.init_compute_factor
+        acquired_idx = _init_acquired_idx_default(
+            train_df, args.init_points, rng, C_lim, args.C_window
+        )
+        init_best_hp_idx = acquired_idx.copy()
+        init_compute = float(train_df.loc[acquired_idx, "C"].sum())
+        print(f"Init (default): {len(acquired_idx)} random points under C_lim={C_lim:.2e}")
+        n_init = len(acquired_idx)
+
+    init_points_idx = init_best_hp_idx.copy()
+    n_iters = n_init + (args.niters or (MAX_ITERS - args.init_points))
+    total_compute_spent = init_compute
 
     history = []
     df_pred = None
     surrogate_pred_rows = []
     interp_names = list(form.interpretable(global_best_params).keys())
+    global_interp = form.interpretable(global_best_params)
+    val_interp = form.interpretable(val_best_params)
     incumbents = {name: np.inf for name in interp_names}
+    incumbents_val = {name: np.inf for name in interp_names}
     # incumbent parametric fit (lowest in-data fit loss), used to warm-start the GP mean
     _best_fit_loss, _best_fit_params = np.inf, None
 
@@ -225,7 +325,7 @@ def run_acquisition(args, form, gp_features, train_df, global_best_params, fit_g
                 # a kernel must be positive-definite), which happens with few / near-duplicate points.
                 # We fall back to a random pick for this one iteration; warn so that's not silent.
                 warnings.warn(
-                    f"[iter {iter_idx - args.init_points}] selection GP fit failed "
+                    f"[iter {iter_idx - n_init}] selection GP fit failed "
                     f"({type(e).__name__}: {e}); using a RANDOM pick this iteration "
                     f"instead of '{args.selection}'.",
                     RuntimeWarning, stacklevel=2,
@@ -272,27 +372,21 @@ def run_acquisition(args, form, gp_features, train_df, global_best_params, fit_g
         print(f"#Iteration {iter_idx} on {observations.shape[0]} obs + {len(remaining_idx)} fant: Fitting loss={best_loss:2.2e}", end="; ")
         print_fit_results(form, best_params)
 
-        # regrets in interpretable space; irreducible-loss-like terms (form.signed_params) keep sign
+        # regrets in interpretable space vs global + validation (pool-only) references
         interp = form.interpretable(best_params)
-        global_interp = form.interpretable(global_best_params)
-        regrets = {
-            name: (interp[name] - global_interp[name]) if name in form.signed_params
-            else abs(interp[name] - global_interp[name])
-            for name in interp_names
-        }
-        
+        regrets = _param_regrets(interp, global_interp, form, interp_names)
+        regrets_val = _param_regrets(interp, val_interp, form, interp_names)
+
         if args.model_type == "none":
             # model-free: no infill, so obs-only fit equals obs+fant fit
             obs_only_params, obs_only_best_loss = best_params, best_loss
             obs_only_regrets = regrets
+            obs_only_regrets_val = regrets_val
         else:
             obs_only_params, obs_only_best_loss = fit_grid(observations)
             obs_only_interp = form.interpretable(obs_only_params)
-            obs_only_regrets = {
-                name: (obs_only_interp[name] - global_interp[name]) if name in form.signed_params
-                else abs(obs_only_interp[name] - global_interp[name])
-                for name in interp_names
-            }
+            obs_only_regrets = _param_regrets(obs_only_interp, global_interp, form, interp_names)
+            obs_only_regrets_val = _param_regrets(obs_only_interp, val_interp, form, interp_names)
             print(f"Fit on {observations.shape[0]} obs only: Fitting loss={obs_only_best_loss:2.2e}", end="; ")
             print_fit_results(form, obs_only_params)
 
@@ -313,80 +407,71 @@ def run_acquisition(args, form, gp_features, train_df, global_best_params, fit_g
             "obs_only_fit_loss": float(obs_only_best_loss),
             **{f"regret_{name}": float(regrets[name]) for name in interp_names},
             **{f"regret_obs_only_{name}": float(obs_only_regrets[name]) for name in interp_names},
+            **{f"regret_val_{name}": float(regrets_val[name]) for name in interp_names},
+            **{f"regret_obs_only_val_{name}": float(obs_only_regrets_val[name]) for name in interp_names},
         })
-        # updating incumbent tracker
-        # signed params: incumbent is the value closest to zero, sign preserved; others: plain min
-        for name in interp_names:
-            if name in form.signed_params:
-                incumbents[name] = min(incumbents[name], history[-1][f"regret_{name}"], key=abs)
-            else:
-                incumbents[name] = min(incumbents[name], history[-1][f"regret_{name}"])
+        _update_incumbents(incumbents, history[-1], form, interp_names, "regret")
+        _update_incumbents(incumbents_val, history[-1], form, interp_names, "regret_val")
 
         # update C_lim envelope for sampling: ceiling stays one growth step above the max cost seen
         C_lim = observations.C.max()
 
-    print(f"{'='*30}\nIncumbent regrets:")
+    print(f"{'='*30}\nIncumbent regrets (global reference):")
     for name in interp_names:
         tag = " (signed)" if name in form.signed_params else ""
         print(f"{name}{tag}: {incumbents[name]:.4f}")
+    print(f"{'-'*30}\nIncumbent regrets (validation / pool reference):")
+    for name in interp_names:
+        tag = " (signed)" if name in form.signed_params else ""
+        print(f"{name}{tag}: {incumbents_val[name]:.4f}")
     print(f"{'='*30}")
-    return history, incumbents, interp_names, df_pred, acquired_idx, surrogate_pred_rows
+    return history, incumbents, incumbents_val, interp_names, df_pred, acquired_idx, surrogate_pred_rows
 
 
 # --- shared plotting helpers (both tasks lay out a grid of per-param regret panels) ---
 
+def _running_incumbent(vals, signed: bool) -> np.ndarray:
+    """Running best regret (signed: closest to zero; unsigned: minimum)."""
+    if signed:
+        running, best = [], vals[0]
+        for v in vals:
+            if abs(v) < abs(best):
+                best = v
+            running.append(best)
+        return np.asarray(running)
+    return np.minimum.accumulate(vals)
+
+
 def plot_regret_panels(flat_axes, start_idx, history_df, form, interp_names):
     """
-    Draw one incumbent-regret panel per interpretable param, plotting both
-    'regret_{name}' and 'regret_obs_only_{name}' in the same panel. Returns the next free panel index.
+    Draw one incumbent-regret panel per interpretable param (validation reference only).
 
-    Signed params (irreducible-loss-like) track the running value closest to zero with sign
-    preserved (matches the printed incumbents); others track the running minimum on a log axis.
+    Colors: red = obs+fant, green = obs-only. Global regrets remain in history for
+    post-hoc plotting.
     """
     idx = start_idx
     for name in interp_names:
         ax = flat_axes[idx]
-        col = f"regret_{name}"
-        
-        obs_only_col = f"regret_obs_only_{name}"
-        color_main = "red"
-        color_obs_only = "tab:green"
+        signed = name in form.signed_params
+        series = [
+            (f"regret_val_{name}", "val obs+fant", "red"),
+            (f"regret_obs_only_val_{name}", "val obs only", "tab:green"),
+        ]
+        for col, label, color in series:
+            if col not in history_df.columns:
+                continue
+            running = _running_incumbent(history_df[col].to_numpy(), signed)
+            ax.plot(history_df["iter"], running, label=label, color=color, lw=1.5)
 
-        # Plot primary regret line
-        if name in form.signed_params:
-            vals = history_df[col].to_numpy()
-            signed_running, best = [], vals[0]
-            for v in vals:
-                if abs(v) < abs(best):
-                    best = v
-                signed_running.append(best)
-            ax.plot(history_df["iter"], signed_running, label=f"obs+fant regret {name}", color=color_main)
+        if signed:
             ax.axhline(0, color="gray", lw=0.5)
             title = f"incumbent regret {name} (signed)"
         else:
-            vals = history_df[col].to_numpy()
-            running_min = np.minimum.accumulate(vals)
-            ax.plot(history_df["iter"], running_min, label=f"obs+fant regret {name}", color=color_main)
             ax.set_yscale("log")
             title = f"incumbent regret {name}"
-
-        # Plot obs_only regret line if present
-        if obs_only_col in history_df.columns:
-            obs_vals = history_df[obs_only_col].to_numpy()
-            if name in form.signed_params:
-                signed_running_obs, best_obs = [], obs_vals[0]
-                for v in obs_vals:
-                    if abs(v) < abs(best_obs):
-                        best_obs = v
-                    signed_running_obs.append(best_obs)
-                ax.plot(history_df["iter"], signed_running_obs, label=f"obs only regret {name}", color=color_obs_only)
-            else:
-                running_min_obs = np.minimum.accumulate(obs_vals)
-                ax.plot(history_df["iter"], running_min_obs, label=f"obs only regret {name}", color=color_obs_only)
-        
         ax.set_xlabel("Samples")
         ax.set_title(title)
-        ax.legend(fontsize=9)
+        ax.legend(fontsize=7)
 
         idx += 1
     return idx
@@ -450,6 +535,23 @@ def _namespace_to_json(args: Namespace) -> dict:
         else:
             out[k] = v
     return out
+
+
+def save_ref_fits(form, global_best_params, val_best_params, output_dir: Path) -> None:
+    """Write global + validation (pool-only) reference parametric fits."""
+    payload = {
+        "global": {
+            "params": list(np.asarray(global_best_params, dtype=float)),
+            "interpretable": form.interpretable(global_best_params),
+        },
+        "validation": {
+            "params": list(np.asarray(val_best_params, dtype=float)),
+            "interpretable": form.interpretable(val_best_params),
+        },
+    }
+    path = output_dir / "ref_fits.json"
+    path.write_text(json.dumps(payload, indent=2, sort_keys=True))
+    print(f"Saved reference fits to {path}")
 
 
 def save_surrogate_predictions(rows, output_dir: Path) -> None:

@@ -178,10 +178,10 @@ def run(args):
     print(f"Fitting parametric form on all of the training data {train_df.shape}...")
 
     # build fit first extracts pareto frontier and then fits the L0 parametric form
-    train_best_params, train_best_loss = build_fit(
+    val_best_params, val_best_loss = build_fit(
         train_df, form_name=args.form, y_name="loss", fit_quality=args.fit_quality
     )
-    print_fit_results(form, train_best_params)
+    print_fit_results(form, val_best_params)
     
     # Compute train and held-out pareto frontiers
     combined = pd.concat([train_df, test_df_known])
@@ -225,8 +225,8 @@ def run(args):
         return out
 
     # --- acquisition loop ---
-    history, incumbents, interp_names, df_pred, acquired_idx, surrogate_pred_rows = _common.run_acquisition(
-        args, form, gp_features, train_df, global_best_params, fit_grid, heldout_metric
+    history, incumbents, incumbents_val, interp_names, df_pred, acquired_idx, surrogate_pred_rows = _common.run_acquisition(
+        args, form, gp_features, train_df, global_best_params, val_best_params, fit_grid, heldout_metric
     )
 
     pareto_diag = None
@@ -252,6 +252,7 @@ def run(args):
     output_dir = _common.allocate_run_output_dir(args)
     output_dir.mkdir(parents=True, exist_ok=True)
     _common.save_run_args(args, output_dir)
+    _common.save_ref_fits(form, global_best_params, val_best_params, output_dir)
     history_df = pd.DataFrame(history)
     history_path = output_dir / "history.parquet"
     history_df.to_parquet(history_path, index=False)
@@ -262,11 +263,13 @@ def run(args):
 
     if args.plot_figure:
         _plot(args, form, supports_C, history_df, interp_names, train_df, acquired_idx,
-              held_out_df, C_known, L_known, C_unknown, global_best_params, output_dir)
+              held_out_df, C_known, L_known, C_unknown, global_best_params, val_best_params,
+              output_dir)
 
 
 def _plot(args, form, supports_C, history_df, interp_names, train_df, acquired_idx,
-          held_out_df, C_known, L_known, C_unknown, global_best_params, output_dir):
+          held_out_df, C_known, L_known, C_unknown, global_best_params, val_best_params,
+          output_dir):
     # panels: one regret plot per interpretable param, plus the two-set recovery curve, compute/iter,
     # and (for L-vs-C forms) the region-shaded fit-comparison plot. Laid out dynamically.
     set_pub_style()
@@ -331,9 +334,14 @@ def _plot(args, form, supports_C, history_df, interp_names, train_df, acquired_i
             L_hat = form.to_L_vs_C(C_grid, np.asarray(params))
             ax.plot(C_grid[seen], L_hat[seen], color=color, ls="-", label=label)
             ax.plot(C_grid[~seen], L_hat[~seen], color=color, ls="--")
-        L_global_hat = form.to_L_vs_C(C_grid, np.asarray(global_best_params))
-        ax.plot(C_grid[seen], L_global_hat[seen], color="tab:purple", ls="-.", label="all data fit")
-        ax.plot(C_grid[~seen], L_global_hat[~seen], color="tab:purple", ls="--")
+        ref_curves = [
+            (global_best_params, "tab:purple", "-.", "global fit (all data)"),
+            (val_best_params, "#D55E00", ":", "validation fit (pool)"),
+        ]
+        for params, color, ls, label in ref_curves:
+            L_hat = form.to_L_vs_C(C_grid, np.asarray(params))
+            ax.plot(C_grid[seen], L_hat[seen], color=color, ls=ls, label=label)
+            ax.plot(C_grid[~seen], L_hat[~seen], color=color, ls="--")
         ax.set_yscale("log")
         ax.set_xscale("log")
         ax.set_xlabel("FLOPs")
