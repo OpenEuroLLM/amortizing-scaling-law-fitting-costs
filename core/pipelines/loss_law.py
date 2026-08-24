@@ -50,42 +50,56 @@ def _supports_compute_axis(form) -> bool:
         return False
 
 
-def _compute_pareto_membership_diagnostics(observations, df_pred, global_df) -> dict:
-    """Compare global, observed-only, and fantasized C-loss Pareto frontiers."""
-    obs_pareto = get_pareto_frontier(observations, x_name="C", y_name="loss")
-    acq = set(obs_pareto.index)
+def _pareto_C_frontier(df: pd.DataFrame) -> pd.DataFrame:
+    """Reduce to the C-loss Pareto frontier (used by L-vs-C forms: L0, chinchilla3/interaction)."""
+    return get_pareto_frontier(df, x_name="C", y_name="loss")
 
-    fant_pareto = get_pareto_frontier(df_pred, x_name="C", y_name="loss")
-    fant_idx = set(fant_pareto.index)
 
-    global_pareto = get_pareto_frontier(global_df, x_name="C", y_name="loss")
-    global_idx = set(global_pareto.index)
+def _optimal_per_ND(df: pd.DataFrame) -> pd.DataFrame:
+    """Reduce to one row per (N, D): the minimum-loss row (best HP config observed at that scale).
+
+    Chinchilla forms fit against every (N, D, lr, gbsz, ...) row directly (``use_pareto=False``),
+    so unlike the C-loss frontier this isn't what's fed to the fit -- it's a diagnostic asking the
+    analogous question per (N, D) cell instead of per compute budget.
+    """
+    return df.loc[df.groupby(["N", "D"])["loss"].idxmin()]
+
+
+def _compute_membership_diagnostics(observations, df_pred, global_df, reduce_fn) -> dict:
+    """Compare global, observed-only, and fantasized reduced point sets.
+
+    ``reduce_fn(df) -> reduced df`` selects the kept rows (by index) -- either the C-loss Pareto
+    frontier or the optimal-per-(N,D) point set.
+    """
+    obs_idx = set(reduce_fn(observations).index)
+    fant_idx = set(reduce_fn(df_pred).index)
+    global_idx = set(reduce_fn(global_df).index)
 
     return {
         "n_observations": int(observations.shape[0]),
         "counts": {
             "global_frontier": len(global_idx),
-            "global_in_observed": len(global_idx & acq),
+            "global_in_observed": len(global_idx & obs_idx),
             "global_in_fantasized": len(global_idx & fant_idx),
-            "observed_frontier": len(acq),
+            "observed_frontier": len(obs_idx),
             "fantasized_frontier": len(fant_idx),
-            "fantasized_from_observed": len(fant_idx & acq),
-            "fantasized_from_gp": len(fant_idx - acq),
+            "fantasized_from_observed": len(fant_idx & obs_idx),
+            "fantasized_from_gp": len(fant_idx - obs_idx),
         },
         "indices": {
             "global_frontier": sorted(int(i) for i in global_idx),
-            "global_in_observed": sorted(int(i) for i in global_idx & acq),
+            "global_in_observed": sorted(int(i) for i in global_idx & obs_idx),
             "global_in_fantasized": sorted(int(i) for i in global_idx & fant_idx),
-            "observed_frontier": sorted(int(i) for i in acq),
+            "observed_frontier": sorted(int(i) for i in obs_idx),
             "fantasized_frontier": sorted(int(i) for i in fant_idx),
-            "fantasized_from_observed": sorted(int(i) for i in fant_idx & acq),
-            "fantasized_from_gp": sorted(int(i) for i in fant_idx - acq),
+            "fantasized_from_observed": sorted(int(i) for i in fant_idx & obs_idx),
+            "fantasized_from_gp": sorted(int(i) for i in fant_idx - obs_idx),
         },
     }
 
 
-def _print_pareto_membership_diagnostics(diag: dict) -> None:
-    """Print the summary table from ``_compute_pareto_membership_diagnostics``."""
+def _print_membership_diagnostics(diag: dict, title: str) -> None:
+    """Print the summary table from ``_compute_membership_diagnostics``."""
     labels = [
         ("global_frontier", "global frontier"),
         ("global_in_observed", "    global points in observed set"),
@@ -97,7 +111,7 @@ def _print_pareto_membership_diagnostics(diag: dict) -> None:
     ]
     counts = diag["counts"]
     width = max(len(label) for _, label in labels)
-    print(f"{'='*30}\nDiagnostics for Pareto membership:")
+    print(f"{'='*30}\n{title}:")
     print(f"observations: ({diag['n_observations']},)")
     print(f"{'-'*width} : {'-'*10}")
     for key, label in labels[:3]:
@@ -108,10 +122,10 @@ def _print_pareto_membership_diagnostics(diag: dict) -> None:
     print(f"{'='*30}")
 
 
-def _save_pareto_membership(diag: dict, output_dir: Path) -> None:
-    path = output_dir / "pareto_membership.json"
+def _save_membership(diag: dict, output_dir: Path, filename: str) -> None:
+    path = output_dir / filename
     path.write_text(json.dumps(diag, indent=2, sort_keys=True))
-    print(f"Saved pareto membership diagnostics to {path}")
+    print(f"Saved membership diagnostics to {path}")
 
 
 def reconstruct_df_pred_at_iter(train_df, history_row, pred_iter_df, y_target="loss"):
@@ -239,11 +253,19 @@ def run(args):
     )
 
     pareto_diag = None
-    if supports_C and df_pred is not None:
-        pareto_diag = _compute_pareto_membership_diagnostics(
-            train_df.loc[acquired_idx], df_pred, _global_df
-        )
-        _print_pareto_membership_diagnostics(pareto_diag)
+    nd_diag = None
+    if df_pred is not None:
+        observations = train_df.loc[acquired_idx]
+        if supports_C:
+            pareto_diag = _compute_membership_diagnostics(
+                observations, df_pred, _global_df, _pareto_C_frontier
+            )
+            _print_membership_diagnostics(pareto_diag, "Diagnostics for Pareto (C vs loss) membership")
+        if form.input_cols == ["N", "D"]:
+            nd_diag = _compute_membership_diagnostics(
+                observations, df_pred, _global_df, _optimal_per_ND
+            )
+            _print_membership_diagnostics(nd_diag, "Diagnostics for optimal-per-(N,D) membership")
 
     # --- report + save + plot ---
     print(f"{'-'*30}")
@@ -267,7 +289,9 @@ def run(args):
     print(f"Saved history to {history_path}")
     _common.save_surrogate_predictions(surrogate_pred_rows, output_dir)
     if pareto_diag is not None:
-        _save_pareto_membership(pareto_diag, output_dir)
+        _save_membership(pareto_diag, output_dir, "pareto_membership.json")
+    if nd_diag is not None:
+        _save_membership(nd_diag, output_dir, "nd_optimal_membership.json")
 
     if args.plot_figure:
         _plot(args, form, supports_C, history_df, interp_names, train_df, acquired_idx,
