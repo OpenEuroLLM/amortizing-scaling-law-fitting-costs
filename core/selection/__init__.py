@@ -13,7 +13,7 @@ from .farthest_point import FarthestPointSelection
 from .local_search import LocalSearch
 from .successive_halving import SuccessiveHalving, SuccessiveHalvingGP, _sh_schedule
 
-from .ei import EISelection, EIPerCostSelection, PISelection, LCBSelection
+from .acquisition_score import EISelection, EIPerCostSelection, PISelection, LCBSelection
 from .tabpfn_ei import TabPFNEISelection
 
 SELECTION = {
