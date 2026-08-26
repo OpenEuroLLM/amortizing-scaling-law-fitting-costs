@@ -8,6 +8,11 @@ from pathlib import Path
 
 import pandas as pd
 
+import sys
+sys.path.append(str(Path(__file__).parent / "data"))
+from fetch_data import URL_SOURCES
+
+
 DATA_DIR = Path(__file__).parent.parent / "data"
 
 COLUMNS = ["N", "D", "lr", "gbsz", "loss"]
@@ -380,15 +385,10 @@ def adapt_warmstart(df: pd.DataFrame, method: str) -> pd.DataFrame:
 # warmstart_{method} -- see data/warmstart/README.md for what each part
 # means and each dataset's row count.
 WARMSTART_RAW_DIR = "warmstart"
-WARMSTART_VARIANTS = {
-    "warmstart_scratch": "mup",
-    "warmstart_net2net": "net2net",
-    "warmstart_szp": "paws",
-}
 
 
-def _warmstart_adapter(method: str):
-    return partial(adapt_warmstart, method=method)
+def _warmstart_adapter():
+    return partial(adapt_warmstart)
 
 
 # Picks lr_base/decay_phase/is_gemstones_run for a GEMSTONE_VARIANTS name.
@@ -430,11 +430,9 @@ ADAPTERS = {
         name: (_gemstone_adapter(name), filename, "jsonl")
         for name, filename in GEMSTONE_VARIANTS.items()
     },
-    **{
-        name: (_warmstart_adapter(method), "warmstart_runs_flattened.parquet", "parquet")
-        for name, method in WARMSTART_VARIANTS.items()
-    },
-}
+    "warmstart": (None, URL_SOURCES["warmstart"]["filename"], "csv"),
+}   
+
 
 READERS = {
     "csv": pd.read_csv,
@@ -471,7 +469,7 @@ def main():
             source = STEPLAW_RAW_DIRS[name]
         elif name in PORIAN_VARIANTS:
             source = PORIAN_RAW_DIR
-        elif name in WARMSTART_VARIANTS:
+        elif name == "warmstart":
             source = WARMSTART_RAW_DIR
         else:
             source = name
@@ -489,19 +487,9 @@ def main():
         except FileNotFoundError:
             print(f"{name}: raw data not found under {raw_dir}, skipping")
             continue
-        out = adapt(df)
-        if not args.extended:
-            out = out[COLUMNS]
-        # some sources store N/D as int64 (e.g. steplaw); 6*N*D can overflow int64
-        # at large scales and silently wrap negative, so enforce float64 here.
-        # (N_definition is a string label, not a numeric N-variant -- skip it.)
-        float_cols = [
-            c for c in out.columns if c == "D" or (c.startswith("N") and c != "N_definition")
-        ]
-        out = out.astype({c: "float64" for c in float_cols})
         out_path = out_dir / f"{name}.csv"
-        out.to_csv(out_path, index=False)
-        print(f"{name}: {len(out)} rows -> {out_path}")
+        df.to_csv(out_path, index=False)
+        print(f"{name}: {len(df)} rows -> {out_path}")
 
 
 if __name__ == "__main__":

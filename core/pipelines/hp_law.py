@@ -90,9 +90,13 @@ def run(args):
     print("Global optimal-HP fit (all data):")
     print_fit_results(form, global_best_params)
 
-    # per-scale optimal HP on each region: the pool (in-region) and the held-out largest scales
     test_opt = _reduce_to_optima(held_out_df, scale_cols)
     pool_opt = _reduce_to_optima(train_df, scale_cols)
+    val_best_params, _ = build_fit(
+        pool_opt, form_name=args.form, y_name=target, fit_quality=args.fit_quality
+    )
+    print("Validation (pool-only) optimal-HP fit:")
+    print_fit_results(form, val_best_params)
 
     def _hp_logmse(frame_opt, params):
         if frame_opt is None or len(frame_opt) == 0:
@@ -115,8 +119,8 @@ def run(args):
         }
 
     # --- acquisition loop ---
-    history, incumbents, interp_names, df_pred, acquired_idx, surrogate_pred_rows = _common.run_acquisition(
-        args, form, gp_features, train_df, global_best_params, fit_grid, heldout_metric
+    history, incumbents, incumbents_val, interp_names, df_pred, acquired_idx, surrogate_pred_rows = _common.run_acquisition(
+        args, form, gp_features, train_df, global_best_params, val_best_params, fit_grid, heldout_metric
     )
 
     # --- report + save + plot ---
@@ -131,6 +135,7 @@ def run(args):
     output_dir = _common.allocate_run_output_dir(args)
     output_dir.mkdir(parents=True, exist_ok=True)
     _common.save_run_args(args, output_dir)
+    _common.save_ref_fits(form, global_best_params, val_best_params, output_dir)
     history_df = pd.DataFrame(history)
     history_path = output_dir / "history.parquet"
     history_df.to_parquet(history_path, index=False)

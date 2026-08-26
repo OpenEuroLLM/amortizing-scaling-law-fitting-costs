@@ -201,11 +201,11 @@ def run(args):
     print(f"Fitting parametric form on all of the training data {train_df.shape}...")
 
     # build fit first extracts pareto frontier and then fits the L0 parametric form
-    train_best_params, train_best_loss = build_fit(
+    val_best_params, val_best_loss = build_fit(
         train_df, form_name=args.form, y_name="loss", fit_quality=args.fit_quality
     )
-    print_fit_results(form, train_best_params)
-
+    print_fit_results(form, val_best_params)
+    
     # Compute train and held-out pareto frontiers
     combined = pd.concat([train_df, test_df_known])
     global_pareto = get_pareto_frontier(combined, x_name='C', y_name="loss")
@@ -248,8 +248,8 @@ def run(args):
         return out
 
     # --- acquisition loop ---
-    history, incumbents, interp_names, df_pred, acquired_idx, surrogate_pred_rows = _common.run_acquisition(
-        args, form, gp_features, train_df, train_best_params, fit_grid, heldout_metric
+    history, incumbents, incumbents_val, interp_names, df_pred, acquired_idx, surrogate_pred_rows = _common.run_acquisition(
+        args, form, gp_features, train_df, global_best_params, val_best_params, fit_grid, heldout_metric
     )
 
     pareto_diag = None
@@ -283,6 +283,7 @@ def run(args):
     output_dir = _common.allocate_run_output_dir(args)
     output_dir.mkdir(parents=True, exist_ok=True)
     _common.save_run_args(args, output_dir)
+    _common.save_ref_fits(form, global_best_params, val_best_params, output_dir)
     history_df = pd.DataFrame(history)
     history_path = output_dir / "history.parquet"
     history_df.to_parquet(history_path, index=False)
