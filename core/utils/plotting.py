@@ -39,6 +39,13 @@ D_palette = ["#10ffbf", "#23e4ac", "#2bca99", "#2fb186", "#309874", "#308063",
 METHOD_PALETTE = ["#6b7280", "#D55E00", "#009E73", "#CC79A7", "#0072B2", "#E69F00", "#56B4E9"]
 
 FORMAT_BILLIONS = lambda x: f"{float(x)/1e9:g}B"
+FORMAT_N = lambda x: f"{float(x)/1e9:.2g}B"
+
+
+def build_N_color_map(Ns):
+    """Map each sorted, unique value of ``Ns`` to a color from ``N_palette`` (cycled past its length)."""
+    Ns_sorted = sorted(set(float(n) for n in Ns))
+    return {n: N_palette[i % len(N_palette)] for i, n in enumerate(Ns_sorted)}
 
 
 def _sci_label(v, _pos=None):
@@ -73,12 +80,14 @@ def set_pub_style():
     mpl.rcParams.update(_PUB_RCPARAMS)
 
 
-def _tidy_log_axis(ax, which="x"):
+def tidy_log_axis(ax, which="x", label_fn=None):
     """Label a log axis at a few clean ticks (1/2/5 x 10^n in range; else ~4 log-spaced), no crowding.
 
     Call after the data is plotted (limits set). Robust to sub-decade ranges, where the usual
     1/2/5 marks can fall entirely outside the view and matplotlib would otherwise crowd the minors.
+    ``label_fn`` formats a tick value to a string; defaults to scientific ``m x 10^n`` notation.
     """
+    label_fn = label_fn or _sci_label
     a = ax.xaxis if which == "x" else ax.yaxis
     lo, hi = ax.get_xlim() if which == "x" else ax.get_ylim()
     lo, hi = max(lo, hi * 1e-300), hi
@@ -93,7 +102,7 @@ def _tidy_log_axis(ax, which="x"):
         if len(ticks) > 9:
             ticks = ticks[:: int(np.ceil(len(ticks) / 9))]
     a.set_major_locator(FixedLocator(ticks))
-    a.set_major_formatter(FuncFormatter(_sci_label))
+    a.set_major_formatter(FuncFormatter(lambda v, _pos=None: label_fn(v)))
     a.set_minor_locator(NullLocator())
 
 
@@ -232,7 +241,7 @@ def _loss_panel0(ax, experiments, hists_by_label, form, refs):
         ax.plot(Cgrid[seen], y[seen], color=spec["color"], lw=1.8, label=label)      # train region
         ax.plot(Cgrid[~seen], y[~seen], color=spec["color"], lw=1.8, ls="--")        # held-out region
     ax.set_xscale("log"); ax.set_yscale("log")
-    _tidy_log_axis(ax, "x"); _tidy_log_axis(ax, "y")
+    tidy_log_axis(ax, "x"); tidy_log_axis(ax, "y")
     ax.set_xlabel("compute C (FLOPs)"); ax.set_ylabel("loss L")
     ax.set_title("recovered law + eval regions"); ax.legend(fontsize=7)
 
@@ -255,7 +264,7 @@ def _hp_panel0(ax, experiments, hists_by_label, form, refs):
         ax.plot(grid, np.asarray(form.func(X_of(grid), mp, return_log_loss=False), dtype=float),
                 color=spec["color"], lw=1.8, label=label)
     ax.set_xscale("log"); ax.set_yscale("log")
-    _tidy_log_axis(ax, "x"); _tidy_log_axis(ax, "y")
+    tidy_log_axis(ax, "x"); tidy_log_axis(ax, "y")
     ax.set_xlabel(scale_col); ax.set_ylabel(f"optimal {target}")
     ax.set_title(f"recovered optimal {target} + held-out point"); ax.legend(fontsize=8)
 
@@ -280,7 +289,7 @@ def _two_set_panel(ax, experiments, hists_by_label, ylab):
             ax.fill_between(x, q1, q3, color=spec["color"], alpha=0.12, lw=0)
             ax.plot(x, med, ls, marker=mk, ms=3, color=spec["color"], label=f"{label} ({tag})")
     ax.set_xscale("log"); ax.set_yscale("log")
-    _tidy_log_axis(ax, "x"); _tidy_log_axis(ax, "y")
+    tidy_log_axis(ax, "x"); tidy_log_axis(ax, "y")
     ax.set_xlabel("compute spent (FLOPs)"); ax.set_ylabel(ylab)
     ax.set_title("law recovery: in-region vs held-out"); ax.legend(fontsize=7)
 
@@ -322,10 +331,10 @@ def comparison_figure(experiments, hists_by_label, form, refs, *, title, out_pat
         if gt is not None:
             ax.axhline(gt, ls="--", color="#111827", lw=1.3, label=f"full-grid={gt:.3g}")
         ax.set_xscale("log")
-        _tidy_log_axis(ax, "x")
+        tidy_log_axis(ax, "x")
         if logy:
             ax.set_yscale("log")
-            _tidy_log_axis(ax, "y")
+            tidy_log_axis(ax, "y")
         ax.set_xlabel("compute spent (FLOPs)"); ax.set_ylabel(ylab)
         ax.set_title(title_); ax.legend(fontsize=8)
 
@@ -343,7 +352,7 @@ def comparison_figure(experiments, hists_by_label, form, refs, *, title, out_pat
                                       [h["total_compute_spent"].to_numpy() for h in hists])
         ax.fill_between(x, q1, q3, color=spec["color"], alpha=0.15, lw=0)
         ax.plot(x, med, "-o", color=spec["color"], ms=3, label=label)
-    ax.set_yscale("log"); _tidy_log_axis(ax, "y")
+    ax.set_yscale("log"); tidy_log_axis(ax, "y")
     ax.set_xlabel("iteration"); ax.set_ylabel("total compute spent (FLOPs)")
     ax.set_title("compute spent"); ax.legend(fontsize=8)
 

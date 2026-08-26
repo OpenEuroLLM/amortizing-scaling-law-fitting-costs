@@ -80,7 +80,7 @@ def adapt_oellm_english(df: pd.DataFrame) -> pd.DataFrame:
         COLUMNS
         + ["width", "depth", "tied_embeddings", "seq_len", "vocab_size", "N_definition"]
         + ["lr_schedule", "warmup_iters", "decay_iters", "min_lr"]
-        + ["num_heads", "ffn", "beta2", "seed"]
+        + ["num_heads", "ffn", "beta2", "seed", "N_approx"]
     ]
 
 
