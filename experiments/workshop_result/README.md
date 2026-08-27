@@ -25,9 +25,31 @@ renders as a labelled placeholder, so the grid builds before the L(N,D) runs exi
 
 ## ⚠ The two rows are not a controlled comparison
 
-The forms currently use different recipes (L(C): `ei` / split `C` / held-out 0.5; L(N,D): `random` /
-split `N` / held-out 0.1). So each row is an internally-valid full-vs-window study, but "L(C) vs L(N,D)"
-is confounded with selection + split. See `L(N,D)/README.md` for the table and how to align them.
+The forms currently use different recipes, so each row is an internally-valid full-vs-window study, but
+"L(C) vs L(N,D)" is confounded with selection + split + init. Full config diff (dataset `oellm_english`,
+seeds 0–9 both):
+
+| setting | L(C) | L(N,D) |
+|---|---|---|
+| `--form` | `L0` | `chinchilla3` |
+| `--selection` | `ei` | `random` |
+| `--split_axis` | `C` | `N` |
+| `--held_out_frac` | `0.5` | `0.1` |
+| `--init_compute_factor` | `1` | `10` |
+| `--init_practice` | on (`--init_practice_ds 4`) | off |
+| arm filenames (full / window) | `bo_ei_full` / `bo_ei` | `cwindow_full` / `cwindow_curriculum_bwd` |
+| `--model_type` | `gp` | `gp` |
+| `--niters` | `1000` | `1000` |
+| `--init_points` | `10` | `10` |
+| `--fit_quality` | `dense` | `dense` |
+| `--feature_set` | `default` | `default` |
+| window factors (full / window) | `1e-5 1e3` / `1e-5 1.5` | `1e-5 1e3` / `1e-5 1.5` |
+| → pool / held-out (consequence) | 905 / 37 | 850 / 92 |
+| → envelope / held-frontier pts | 21 / 2 | 20 / 6 |
+
+Six knobs differ (form, selection, split axis, held-out frac, init compute factor, init-practice) plus
+arm naming; everything else matches. To make the rows directly comparable, align those knobs to L(C).
+See `L(N,D)/README.md` for how.
 
 ## Reproduce
 
