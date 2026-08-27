@@ -487,6 +487,10 @@ def main():
         except FileNotFoundError:
             print(f"{name}: raw data not found under {raw_dir}, skipping")
             continue
+        if adapt is not None:
+            df = adapt(df)
+        if not args.extended and set(COLUMNS).issubset(df.columns):
+            df = df[COLUMNS]
         out_path = out_dir / f"{name}.csv"
         df.to_csv(out_path, index=False)
         print(f"{name}: {len(df)} rows -> {out_path}")

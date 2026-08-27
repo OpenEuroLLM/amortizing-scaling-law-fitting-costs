@@ -1,0 +1,42 @@
+{
+  "drive_folder_id": "11gZkWIh4GYBjE9mdTFvLHBXU1YJdBH5Z",
+  "drive_folder_url": "https://drive.google.com/drive/folders/11gZkWIh4GYBjE9mdTFvLHBXU1YJdBH5Z",
+  "note": "Each ablation is one zip on Drive, fetched by drive_id (see ablation_fetch.py). Falls back to a local experiments-ablations checkout when present.",
+  "dataset_default": "oellm_english",
+  "form_default": "L0",
+  "coefs_default": ["L0", "A", "alpha"],
+  "split_default": {"split_axis": "C", "held_out_frac": 0.5},
+  "ablations": {
+    "acquisition": {
+      "study": "D", "zip": "ablation_acquisition.zip", "dir": "ablation_acquisition",
+      "drive_id": "1z4_VuLIYCY9LyHkmc-txOxed0vaGp2cv",
+      "arms": {"af_ei": "EI", "af_pi": "PI", "af_lcb": "LCB", "vanilla": "EI full-pool"}
+    },
+    "baselines": {
+      "study": "B", "zip": "ablation_baselines.zip", "dir": "ablation_baselines",
+      "drive_id": "1i_uFaKCB56Dbx3gYuFeywvqk0_Fe2FGd",
+      "arms": {"rs": "random search", "bo_ei": "GP+EI (ours)", "tabpfn_bo": "TabPFN-BO", "xgb_ens": "XGBoost-ens"}
+    },
+    "cost_aware": {
+      "study": "E-cost", "zip": "ablation_cost_aware.zip", "dir": "ablation_cost_aware",
+      "drive_id": "1zwfElw6Spvm-NUkkMQ27L2dNPtLys1Kt",
+      "arms": {"ei_full": "EI full-pool", "ei_window": "EI window (ours)", "ei_logcost": "EI/log(cost)", "ei_hardcost": "EI/cost"}
+    },
+    "datasets": {
+      "study": "A", "zip": "ablation_datasets.zip", "dir": "ablation_datasets",
+      "drive_id": "1Bw7cU-8B_RLxewPq4JoSJsr4wd3_2zJy",
+      "per_dataset": true,
+      "arms": {"full": "full-pool", "window": "window", "w15": "window x1.5", "w20": "window x2", "slab": "slab 0.5-2"}
+    },
+    "gp_kernels": {
+      "study": "C", "zip": "ablation_gp_kernels.zip", "dir": "ablation_gp_kernels",
+      "drive_id": "1Lld8gqMKUWswwDMbRUcnukhq6nXcwTqr",
+      "arms": {"k_matern": "matern", "k_linear": "linear", "k_linmat": "linear+matern", "k_lnd_mathp": "linear_nd+matern_hp", "vanilla": "matern full-pool"}
+    },
+    "window_growth": {
+      "study": "E-window", "zip": "ablation_window_growth.zip", "dir": "ablation_window_growth",
+      "drive_id": "1NNFbj32WUFKBOS-KgR4nkSi3JBudKEK1",
+      "arms": {"growing": "growing window", "sliding": "sliding window", "vanilla": "no window"}
+    }
+  }
+}
