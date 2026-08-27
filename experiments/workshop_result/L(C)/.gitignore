@@ -1,1 +1,4 @@
-runs/
+# Track the lightweight run sidecars the analysis reads (history.parquet, ref_fits.json,
+# args.json, pareto_membership.json) so the L(C) grid row is reproducible from the repo.
+# Ignore the heavy per-iteration surrogate predictions (~74M, unused by analysis).
+runs/**/surrogate_predictions.parquet
