@@ -1,5 +1,7 @@
 # Surrogate-Based Scaling Laws
 
+This repo is to reproduce the results from the paper: [Amortizing Scaling Law Construction Costs](https://arxiv.org/abs/2609.05016).
+
 Fits neural scaling laws using a chosen acquisition function and a surrogate model trained on a subset of observed runs, rather than requiring all runs to be evaluated.
 
 ## Overview
@@ -202,3 +204,17 @@ Per surrogate backend:
 - GP: `botorch`, `gpytorch`, `torch`
 - TabPFN: `tabpfn`
 - AutoGluon: `autogluon.tabular`
+
+
+## Citation
+
+```bib
+@inproceedings{
+jha-neurips26a,
+title={Amortizing Scaling Law Construction Costs},
+author={Abhash Kumar Jha and Diana Alexandra Onuțu and Neeratyoy Mallik and Swagatam Haldar and Sam Laing and Niccol{\`o} Ajroldi and Shiwei Liu and Joaquin Vanschoren and Aaron Klein},
+booktitle={AXIOM: Foundations of Efficient Deep Learning (NeurIPS Workshops)},
+year={2026},
+url={https://openreview.net/forum?id=GdeAnDy2eB}
+}
+```
