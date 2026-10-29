@@ -1,6 +1,6 @@
 # Surrogate-Based Scaling Laws
 
-This repo is to reproduce the results from the paper: [Amortizing Scaling Law Construction Costs](https://arxiv.org/abs/2609.05016).
+This repo is to reproduce the results from the paper: [Amortizing Scaling Law Construction Costs](https://arxiv.org/abs/2609.05016) ([cite us as this](#citation)).
 
 Fits neural scaling laws using a chosen acquisition function and a surrogate model trained on a subset of observed runs, rather than requiring all runs to be evaluated.
 
